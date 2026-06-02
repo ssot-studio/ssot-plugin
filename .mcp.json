@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ssot": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/dist/index.js"],
+      "env": {
+        "SSOT_SOURCES_FILE": "${CLAUDE_PLUGIN_ROOT}/ssot-sources.json"
+      }
+    }
+  }
+}

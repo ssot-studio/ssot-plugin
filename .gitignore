@@ -1,0 +1,4 @@
+node_modules/
+mcp/node_modules/
+*.tsbuildinfo
+# 커밋 대상(clone-동작): vendor/ (ssot-core 빌드물) · mcp/dist/index.js (core+SDK 번들)
