@@ -158,7 +158,43 @@
 | 본문 `- [ ] OPEN: ...` | 본문 미확정 항목 | OPEN 개수 집계 |
 | 가리키는 대상이 아직 없음 | 끊긴 엣지(dangling) | "여기 빈칸" 위치로 보고 |
 
-`confidence`는 `high | inferred | unverified` 중 하나. `high`만 "사람이 검증한 진실"이다.
+`confidence`의 3단계 의미와 `inferred → high` 승격 흐름은 §6a에 단일 정의한다.
+
+## 6a. confidence 와 검증 승격
+
+`confidence`는 `high | inferred | unverified` 중 하나이며, **그 값이 가리키는 것은 "내용이 맞나"가 아니라 "누가 어디까지 확인했나"**다. 세 값은 동급의 라벨이 아니라 **검증 단계의 사다리**다 — `inferred`는 종착이 아니라 사람 검증을 기다리는 중간 단계다.
+
+| 단계 | 의미 | 채워지는 시점 |
+|------|------|--------------|
+| `unverified` | 빈칸/미채움. 항목(슬롯)만 존재하고 내용이 비었거나 미확정 | `scaffold`/`coverage`가 갭을 빈 노드로 생성할 때 |
+| `inferred` | 코드·스펙에서 자동 추론해 본문을 채웠으나 **미검증** | `fill`/LLM이 코드 추론으로 본문을 채울 때 |
+| `high` | **담당자(owner)가 "맞다"고 사람 검증을 완료한 진실** | 담당자가 검증하고 `lastVerified`를 갱신할 때 |
+
+### 승격 흐름
+
+```
+scaffold/coverage → unverified   (항목만 생성, 내용 비어 있음)
+        ↓ fill/LLM 코드 추론
+       inferred                  (본문 채움, 미검증)
+        ↓ 담당자가 "맞다" 검증 + lastVerified 갱신
+        high                     (사람이 검증한 진실)
+```
+
+1. `coverage`가 코드→SSOT 갭을 찾고 `scaffold`가 빈 노드를 만든다 → `confidence: unverified`.
+2. `fill`/LLM이 코드·스펙을 읽어 본문을 추론으로 채운다 → `confidence: inferred`.
+3. **담당자가 그 추론이 비즈니스 의도·제약에 비추어 맞는지 검증하면 `high`로 승격**하고 `lastVerified`를 갱신한다.
+
+### 왜 `inferred`가 끝이 아닌가
+
+`inferred`는 **"코드의 현재 동작"만 반영**한다 — 비즈니스 의도·제약·올바름은 아직 미확정이다. 추론이 틀렸을 수도 있고, 코드가 의도와 어긋나 있을 수도 있다(코드-의도 불일치). 따라서 `inferred`는 "이 노드는 코드를 받아적었다"는 뜻이지 "이 노드가 옳다"는 뜻이 아니다. **LLM은 보조이고 권위는 사람(owner)에게 있다** — 검증 도장을 찍는 주체는 담당자다(`owner` = 검증 책임, §7).
+
+### verify의 역할 (강제 가능한 것의 경계)
+
+`verify`는 **"검증됐나(lastVerified cadence)"만 결정적으로 강제**한다 — `lastVerified`가 cadence를 넘겨 만료된 노드를 재검증 큐로 보고한다. **"내용이 맞나"는 강제하지 못한다** — 그것은 owner 영역이며 자동 검증 불가다(§8). 즉 `verify`는 `inferred → high` 승격을 대신 해주지 않는다. 승격은 사람의 판단이고, `verify`는 그 판단이 만료되지 않았는지만 추적한다.
+
+### skeleton의 OPEN 문구와의 연결
+
+스켈레톤·`scaffold` 산출 노드의 본문 `- [ ] OPEN: ...`은 두 가지를 동시에 한다: **(1) 아직 풀리지 않은 질문을 기재**하고, **(2) 검증 대기 표식**으로 남는다. "inferred 됨 — 담당자 검증 후 confidence 승격" 류 OPEN 문구는 "추론은 끝났으니 이 노드는 완료"라는 뜻이 **아니라**, "코드 추론까지만 됐고 담당자 검증이 남았다"는 미완 표식이다 — `inferred` 단계에 멈춰 있음을 본문에서 드러낸다. 담당자가 검증해 `high`로 승격하면 해당 OPEN 항목을 닫는다.
 
 ---
 
@@ -176,7 +212,7 @@
 ## 8. 검증 경계 (정직하게)
 
 - **결정적(스크립트가 자동 보장)**: 스키마 적합성 · 끊긴 엣지 · 측면 슬롯 누락 · 본문 표준 섹션 누락(§2a) · 엣지 type 표준 어휘 일치(§5a, 정보 레벨) · id 유일성/중복 결정 · `implementedIn` 경로 실존(코드 drift) · `lastVerified` cadence 만료.
-- **자동 검증 불가(사람 owner 영역)**: `impacts`/`relatesTo`의 의미적 정확성 · `Invariant`의 옳음 · 비즈니스 진실. verify는 "검증되었나(lastVerified·confidence)"만 강제하고 "내용이 맞나"는 강제하지 못한다. 이 경계를 흐리지 않는다.
+- **자동 검증 불가(사람 owner 영역)**: `impacts`/`relatesTo`의 의미적 정확성 · `Invariant`의 옳음 · 비즈니스 진실. verify는 "검증되었나(lastVerified·confidence)"만 강제하고 "내용이 맞나"는 강제하지 못한다(이것이 `inferred → high` 승격이 사람 판단인 이유 — §6a). 이 경계를 흐리지 않는다.
 
 ---
 
