@@ -27,7 +27,7 @@ async function main(): Promise<void> {
     `[ssot-mcp] 설정: ${config.origin} · 소스 ${config.sources.length}개\n`,
   );
 
-  const registry = await SourceRegistry.create(config.sources);
+  const registry = await SourceRegistry.create(config.sources, config.origin);
   for (const src of registry.list()) {
     process.stderr.write(
       `[ssot-mcp] 로드됨: ${src.id} (${src.type}) — 노드 ${src.graph.nodes.size} · 엣지 ${src.graph.edges.length}\n`,
@@ -35,6 +35,11 @@ async function main(): Promise<void> {
   }
   for (const e of registry.loadErrors) {
     process.stderr.write(`[ssot-mcp] 로드 실패: ${e.id} (${e.type}) — ${e.message}\n`);
+  }
+  if (registry.list().length === 0) {
+    process.stderr.write(
+      '[ssot-mcp] 소스 미등록 — ssot-sources.json 을 SSOT_SOURCES_FILE 경로(${CLAUDE_PLUGIN_DATA}/ssot-sources.json)에 만들거나 SSOT_SOURCES env 로 등록하세요.\n',
+    );
   }
 
   await startMcpServer(registry);

@@ -7020,6 +7020,9 @@ function loadConfig(cwd = process.cwd()) {
   const fileEnv = process.env[ENV_FILE];
   if (fileEnv && fileEnv.trim() !== "") {
     const path = isAbsolute(fileEnv) ? fileEnv : resolve(cwd, fileEnv);
+    if (!existsSync(path)) {
+      return { sources: [], origin: `\uD30C\uC77C \uC5C6\uC74C: ${path} \u2014 \uC18C\uC2A4 \uBBF8\uB4F1\uB85D` };
+    }
     return loadFromFile(path);
   }
   const defaultPath = resolve(cwd, DEFAULT_FILENAME);
@@ -8118,9 +8121,12 @@ var LoadedSource = class {
 var SourceRegistry = class _SourceRegistry {
   sources = /* @__PURE__ */ new Map();
   errors = [];
+  /** 설정을 어디서 읽었는지(진단용). 소스 0개일 때 안내에 노출. */
+  configOrigin = "(none)";
   /** 설정 배열을 모두 로드한다. 개별 실패는 errors 에 모으고 나머지를 계속 로드한다. */
-  static async create(configs) {
+  static async create(configs, origin = "(none)") {
     const registry2 = new _SourceRegistry();
+    registry2.configOrigin = origin;
     await Promise.all(
       configs.map(async (config2) => {
         try {
@@ -8139,6 +8145,9 @@ var SourceRegistry = class _SourceRegistry {
   }
   get loadErrors() {
     return this.errors;
+  }
+  get origin() {
+    return this.configOrigin;
   }
   list() {
     return [...this.sources.values()];
@@ -16766,6 +16775,13 @@ function listSources(registry2) {
     bodySupported: s.hasBodySupport(),
     generatedFrom: s.graph.generatedFrom
   }));
+  if (sources.length === 0) {
+    return {
+      sources,
+      loadErrors: registry2.loadErrors,
+      guidance: `\uB4F1\uB85D\uB41C SSOT \uC18C\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4 (\uC124\uC815 \uCD9C\uCC98: ${registry2.origin}). ssot-sources.json \uC744 SSOT_SOURCES_FILE \uACBD\uB85C(\${CLAUDE_PLUGIN_DATA}/ssot-sources.json)\uC5D0 \uB9CC\uB4E4\uAC70\uB098 SSOT_SOURCES env \uB85C \uC18C\uC2A4\uB97C \uB4F1\uB85D\uD558\uC138\uC694.`
+    };
+  }
   return { sources, loadErrors: registry2.loadErrors };
 }
 async function getNode(registry2, sourceId, id) {
@@ -17307,7 +17323,7 @@ async function main() {
     `[ssot-mcp] \uC124\uC815: ${config2.origin} \xB7 \uC18C\uC2A4 ${config2.sources.length}\uAC1C
 `
   );
-  const registry2 = await SourceRegistry.create(config2.sources);
+  const registry2 = await SourceRegistry.create(config2.sources, config2.origin);
   for (const src of registry2.list()) {
     process.stderr.write(
       `[ssot-mcp] \uB85C\uB4DC\uB428: ${src.id} (${src.type}) \u2014 \uB178\uB4DC ${src.graph.nodes.size} \xB7 \uC5E3\uC9C0 ${src.graph.edges.length}
@@ -17317,6 +17333,11 @@ async function main() {
   for (const e of registry2.loadErrors) {
     process.stderr.write(`[ssot-mcp] \uB85C\uB4DC \uC2E4\uD328: ${e.id} (${e.type}) \u2014 ${e.message}
 `);
+  }
+  if (registry2.list().length === 0) {
+    process.stderr.write(
+      "[ssot-mcp] \uC18C\uC2A4 \uBBF8\uB4F1\uB85D \u2014 ssot-sources.json \uC744 SSOT_SOURCES_FILE \uACBD\uB85C(${CLAUDE_PLUGIN_DATA}/ssot-sources.json)\uC5D0 \uB9CC\uB4E4\uAC70\uB098 SSOT_SOURCES env \uB85C \uB4F1\uB85D\uD558\uC138\uC694.\n"
+    );
   }
   await startMcpServer(registry2);
   process.stderr.write("[ssot-mcp] stdio MCP \uC11C\uBC84 \uC900\uBE44 \uC644\uB8CC.\n");

@@ -83,10 +83,16 @@ export interface SourceLoadError {
 export class SourceRegistry {
   private readonly sources = new Map<string, LoadedSource>();
   private readonly errors: SourceLoadError[] = [];
+  /** 설정을 어디서 읽었는지(진단용). 소스 0개일 때 안내에 노출. */
+  private configOrigin = '(none)';
 
   /** 설정 배열을 모두 로드한다. 개별 실패는 errors 에 모으고 나머지를 계속 로드한다. */
-  static async create(configs: SourceConfig[]): Promise<SourceRegistry> {
+  static async create(
+    configs: SourceConfig[],
+    origin: string = '(none)',
+  ): Promise<SourceRegistry> {
     const registry = new SourceRegistry();
+    registry.configOrigin = origin;
     await Promise.all(
       configs.map(async (config) => {
         try {
@@ -106,6 +112,10 @@ export class SourceRegistry {
 
   get loadErrors(): readonly SourceLoadError[] {
     return this.errors;
+  }
+
+  get origin(): string {
+    return this.configOrigin;
   }
 
   list(): LoadedSource[] {

@@ -247,6 +247,11 @@ export function loadConfig(cwd: string = process.cwd()): ResolvedConfig {
   const fileEnv = process.env[ENV_FILE];
   if (fileEnv && fileEnv.trim() !== '') {
     const path = isAbsolute(fileEnv) ? fileEnv : resolve(cwd, fileEnv);
+    // 파일 부재 = 신규 설치/소스 미등록의 정상 상태 → throw 하지 않고 graceful 빈 소스.
+    // 파일이 있는데 깨진 경우(파싱/검증 실패)는 사용자 실수이므로 loadFromFile 안에서 throw.
+    if (!existsSync(path)) {
+      return { sources: [], origin: `파일 없음: ${path} — 소스 미등록` };
+    }
     return loadFromFile(path);
   }
 
@@ -258,6 +263,10 @@ export function loadConfig(cwd: string = process.cwd()): ResolvedConfig {
   return { sources: [], origin: '(none)' };
 }
 
+/**
+ * 파일을 읽어 검증한다. 호출 측은 파일 존재를 먼저 보장해야 한다(부재는 graceful 처리 대상이므로
+ * 여기서 다루지 않는다). 파일이 존재하는데 JSON 파싱/검증에 실패하면 원인을 노출하기 위해 throw.
+ */
 function loadFromFile(path: string): ResolvedConfig {
   if (!existsSync(path)) {
     throw new Error(`설정 파일을 찾을 수 없습니다: ${path}`);

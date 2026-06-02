@@ -86,6 +86,8 @@ export interface SourceInfo {
 export function listSources(registry: SourceRegistry): {
   sources: SourceInfo[];
   loadErrors: readonly { id: string; type: string; message: string }[];
+  /** 등록된 소스가 0개일 때만 채워지는 안내(신규 설치 정상 상태). */
+  guidance?: string;
 } {
   const sources: SourceInfo[] = registry.list().map((s) => ({
     id: s.id,
@@ -97,6 +99,16 @@ export function listSources(registry: SourceRegistry): {
     bodySupported: s.hasBodySupport(),
     generatedFrom: s.graph.generatedFrom,
   }));
+  if (sources.length === 0) {
+    return {
+      sources,
+      loadErrors: registry.loadErrors,
+      guidance:
+        `등록된 SSOT 소스가 없습니다 (설정 출처: ${registry.origin}). ` +
+        'ssot-sources.json 을 SSOT_SOURCES_FILE 경로(${CLAUDE_PLUGIN_DATA}/ssot-sources.json)에 ' +
+        '만들거나 SSOT_SOURCES env 로 소스를 등록하세요.',
+    };
+  }
   return { sources, loadErrors: registry.loadErrors };
 }
 
