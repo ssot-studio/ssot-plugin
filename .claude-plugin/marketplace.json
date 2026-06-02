@@ -1,0 +1,11 @@
+{
+  "name": "ssot-studio",
+  "owner": { "name": "Seungwoo321" },
+  "plugins": [
+    {
+      "name": "ssot",
+      "source": ".",
+      "description": "제품·도메인·시스템 맥락 SSOT 생성·검증·시각화·질의 플러그인 (skills + MCP)"
+    }
+  ]
+}
