@@ -3,6 +3,17 @@
 Claude Code 플러그인 — 제품·도메인·시스템 맥락 **SSOT(Single Source of Truth)** 를 생성·채우고·검증하고·질의한다.
 **스킬**(작성·검증)과 **MCP 서버**(조회·질의)를 함께 제공한다. 한 번 설치하면 모든 프로젝트의 SSOT 레포에 재사용된다.
 
+## 설치
+
+```
+/plugin marketplace add ssot-studio/ssot-plugin
+/plugin install ssot@ssot-studio
+```
+
+설치하면 스킬(`/ssot …`)과 MCP 서버(`ssot_*` 도구)가 **함께** 등록된다. 조회할 SSOT 소스는 로컬 `ssot-sources.json` 에 등록한다(아래 "사용 — 조회/질의" 참고).
+
+> Claude Code 가 구버전이면 `marketplace.json` 의 source 를 인식 못 할 수 있다 — `claude --version` 확인 후 최신으로 업그레이드.
+
 ## 구성
 
 | 구성 | 역할 |
