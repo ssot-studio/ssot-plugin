@@ -26,6 +26,16 @@ import {
 const SERVER_NAME = 'ssot';
 const SERVER_VERSION = '0.0.0';
 
+// 호스트 LLM 에게 주입되는 서버 사용 지침. 제품·도메인 질문을 일반 지식으로 처리하지 않고
+// 이 도구들로 SSOT 를 먼저 조회하도록 유도한다(자동 호출 트리거의 1차 신호).
+const SERVER_INSTRUCTIONS =
+  '이 서버는 등록된 제품의 SSOT(단일 진실원천) 조회용이다. 제품·도메인·시스템에 관한 질문 — ' +
+  "개념이 무엇인지('X 가 뭐야'), 어디에 있는지('X 기능 어디'), 무엇이 필요한지('X 만들 때 Y 필수인가'), " +
+  '무엇과 연결되는지, 무엇을 바꾸면 어디까지 영향이 가는지 — 에는 일반 지식이나 추측으로 답하지 말고, ' +
+  '먼저 ssot_search 로 노드를 찾아 ssot_get_node / ssot_neighbors / ssot_impact 로 사실 근거를 확정한 뒤 답하라. ' +
+  '질문 속 명사(에이전트·프로젝트·모델·권한·RAG 등)는 일반 IT 용어가 아니라 이 제품의 도메인 개념일 수 있으므로 그렇게 해석한다. ' +
+  '검색 결과가 없으면 ssot_gaps 로 SSOT 에 실제로 없는지(미정/미검증인지) 확인한 뒤 단정한다.';
+
 const SOURCE_PROP = {
   type: 'string',
   description: '대상 SSOT 소스 id (ssot_list_sources 로 확인).',
@@ -35,13 +45,13 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_list_sources',
     description:
-      '등록된 모든 SSOT 소스를 나열한다. 각 소스의 type / 노드 수 / 엣지 수 / 본문 지원 여부 / 로드 에러를 반환.',
+      '[트리거] 어떤 SSOT 소스가 등록돼 있는지, 무엇을 조회할 수 있는지 확인이 필요할 때 호출. 검색·조회의 대상 source id 를 모를 때 가장 먼저 부른다. — 등록된 모든 SSOT 소스를 나열한다. 각 소스의 type / 노드 수 / 엣지 수 / 본문 지원 여부 / 로드 에러를 반환.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'ssot_get_node',
     description:
-      '소스에서 단일 노드를 4축 facet(정체성·의미·관계·메타) + 본문 마크다운까지 반환한다. 본문은 lazy 로드 후 frontmatter 권위로 머지된다.',
+      '[트리거] 특정 노드(개념/화면/엔드포인트/규칙/결정 등)의 정의·관계·구현 위치·불변식·신뢰도를 정확히 알아야 할 때 호출. ssot_search 로 노드 id 를 찾은 뒤 그 한 건의 사실 근거를 확정할 때 쓴다. 일반 지식으로 답하지 말고 이 도구가 반환한 정의·관계를 근거로 답하라. — 소스에서 단일 노드를 4축 facet(정체성·의미·관계·메타) + 본문 마크다운까지 반환한다. 본문은 lazy 로드 후 frontmatter 권위로 머지된다.',
     inputSchema: {
       type: 'object',
       properties: { source: SOURCE_PROP, id: { type: 'string', description: '노드 id (예: domain.chat).' } },
@@ -52,7 +62,7 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_search',
     description:
-      '제목·id·정의·목적·소유자 부분일치로 노드를 검색한다. source 생략 시 등록된 모든 소스를 전역 검색.',
+      "[트리거] 제품·도메인·시스템의 개념/화면/엔드포인트/규칙/제약을 묻는 질문이면 일반 지식으로 답하기 전에 가장 먼저 호출. 예: 'X 가 뭐야', 'X 관련 기능 어디 있어', 'X 만들 때 Y 가 필요해/필수야?', 'X 와 Y 관계'. 질문의 명사(에이전트·프로젝트·모델·권한·RAG 등)는 일반 IT 용어가 아니라 등록된 제품의 도메인 개념일 수 있으므로, 자체 추측 대신 키워드로 SSOT 노드를 먼저 찾는다. 결과가 있으면 ssot_get_node 로 근거를 확정하고, 없으면 ssot_gaps 로 SSOT 에 있는지 확인한다. — 제목·id·정의·목적·소유자 부분일치로 노드를 검색한다. source 생략 시 등록된 모든 소스를 전역 검색.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -67,7 +77,7 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_impact',
     description:
-      '한 노드에서 impacts / relatesTo / governs 관계를 따라 파급되는 영향 범위를 트래버설한다. 무엇을 건드리면 어디까지 흔들리는지.',
+      "[트리거] 'X 를 바꾸면/추가하면/지우면 어디까지 영향이 가나', '이 변경의 파급 범위는', '무엇이 같이 깨지나' 류의 질문이면 호출. 변경 영향도·blast radius 를 사실 그래프로 답한다(추측 금지). — 한 노드에서 impacts / relatesTo / governs 관계를 따라 파급되는 영향 범위를 트래버설한다. 무엇을 건드리면 어디까지 흔들리는지.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -82,7 +92,7 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_neighbors',
     description:
-      'depth-N 인접 노드를 반환한다(out/in/both). 1-hop 이웃의 유도 서브그래프 구조 종류(graph/tree/table/stateMachine)도 함께 분류한다.',
+      "[트리거] 'X 와 직접 연결된 게 뭐야', 'X 는 무엇에 의존하나/무엇이 X 에 의존하나', 'X 주변 개념' 류로 한 노드의 직접 이웃·의존 관계를 묻는 질문이면 호출. (전체 파급은 ssot_impact, 단건 정의는 ssot_get_node) — depth-N 인접 노드를 반환한다(out/in/both). 1-hop 이웃의 유도 서브그래프 구조 종류(graph/tree/table/stateMachine)도 함께 분류한다.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -102,7 +112,7 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_gaps',
     description:
-      '소스의 완전성 갭을 보고한다: 끊긴 엣지(치명) · high-confidence 측면 누락(결함) · 진행중 노드(정보) · 고아 owner(정보) · 파싱 에러.',
+      "[트리거] SSOT 의 빈칸·미검증·끊긴 부분을 묻거나, ssot_search 결과가 없어 'SSOT 에 정말 없는 건지(아직 미정/미검증인지)' 확인이 필요할 때 호출. 검색 미스를 '존재하지 않음' 으로 단정하기 전에 이 도구로 확인한다. — 소스의 완전성 갭을 보고한다: 끊긴 엣지(치명) · high-confidence 측면 누락(결함) · 진행중 노드(정보) · 고아 owner(정보) · 파싱 에러.",
     inputSchema: {
       type: 'object',
       properties: { source: SOURCE_PROP },
@@ -113,7 +123,7 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_flag',
     description:
-      '조회 중 발견한 문제 + JIT 캡처(미답 질문/근거 조각)를 GitHub 이슈로 등록할 본문 + gh 커맨드로 구성한다. 문제(flag): dangling/contradiction/missing/other. 캡처(capture, schema-on-read): competency-gap(미답 질문)·rationale-fragment(근거 조각) — 조회/대화 중 생긴 변경거리를 그 시점에 이슈로만 적재(PR/브랜치/커밋 금지, owner 검증 전엔 inferred/unverified). MCP는 읽기전용이므로 이슈를 직접 생성하지 않고 본문·커맨드 텍스트만 반환한다 — 실제 생성은 사람/스킬이 수행.',
+      '[트리거] 조회 중 SSOT 의 모순·누락·오류를 발견했거나, 질문에 SSOT 로 답하지 못했거나(competency-gap), 사용자가 자발적으로 근거·의견을 제시했을 때(rationale-fragment) 이슈 등록을 제안하려고 호출. — 조회 중 발견한 문제 + JIT 캡처(미답 질문/근거 조각)를 GitHub 이슈로 등록할 본문 + gh 커맨드로 구성한다. 문제(flag): dangling/contradiction/missing/other. 캡처(capture, schema-on-read): competency-gap(미답 질문)·rationale-fragment(근거 조각) — 조회/대화 중 생긴 변경거리를 그 시점에 이슈로만 적재(PR/브랜치/커밋 금지, owner 검증 전엔 inferred/unverified). MCP는 읽기전용이므로 이슈를 직접 생성하지 않고 본문·커맨드 텍스트만 반환한다 — 실제 생성은 사람/스킬이 수행.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -218,7 +228,7 @@ async function dispatch(
 export async function startMcpServer(registry: SourceRegistry): Promise<Server> {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOLS }));
