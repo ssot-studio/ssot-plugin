@@ -2,7 +2,8 @@
 //
 //   ssot_list_sources                      등록된 소스 목록 + 노드/엣지 수
 //   ssot_get_node(source, id)              노드 1건(본문 포함, lazy 머지)
-//   ssot_search(source?, query)            제목/정의/목적/소유자 부분일치 검색(소스 전역 또는 단일)
+//   ssot_search(source?, query, tags?)     제목/정의/목적/소유자 부분일치 검색 + 태그 필터(전역/단일)
+//   ssot_list_tags(source?)                노드 tags 를 네임스페이스별로 집계(태그 카탈로그)
 //   ssot_impact(source, id)                impacts/relatesTo/governs 트래버설(파급 영향)
 //   ssot_neighbors(source, id, depth)      depth-N 인접(out/in/both)
 //   ssot_gaps(source)                      완전성 갭(끊긴 엣지/측면 누락/미완/고아 owner)
@@ -13,6 +14,8 @@
 
 import {
   classify,
+  collectTagGroups,
+  nodeMatchesTags,
   reachable,
   type EdgeFilter,
   type SsotEdge,
@@ -32,6 +35,8 @@ export interface NodeSummary {
   owner: string;
   authority: string;
   openCount: number;
+  /** 분류 태그 — "namespace:value"(예: 'domain:auth', 'status:active', 'type:endpoint'). */
+  tags: string[];
 }
 
 function summarize(sourceId: string, node: SsotNode): NodeSummary {
@@ -45,6 +50,7 @@ function summarize(sourceId: string, node: SsotNode): NodeSummary {
     owner: node.facets.meta.owner,
     authority: node.authority,
     openCount: node.openCount,
+    tags: node.tags,
   };
 }
 
@@ -167,29 +173,75 @@ export interface SearchHit extends NodeSummary {
   score: number;
 }
 
+/**
+ * 노드 검색. query(키워드 부분일치) 와 tags(분류 필터)를 함께 받는다.
+ * - query 만: 제목/id/정의/목적/소유자 부분일치(가중 점수).
+ * - tags 만: 해당 태그를 가진 노드 전체(태그는 namespace 내 OR, namespace 간 AND).
+ * - 둘 다: 키워드 매치 AND 태그 매치(교집합).
+ * query 가 비고 tags 만 주어지면 키워드 점수 없이 태그 필터만 적용한다.
+ */
 export function search(
   registry: SourceRegistry,
   query: string,
   sourceId?: string,
   limit = 50,
+  tags?: string[],
 ): SearchHit[] {
   const terms = query
     .toLowerCase()
     .split(/\s+/)
     .map((t) => t.trim())
     .filter(Boolean);
-  if (terms.length === 0) return [];
+  const tagSet = new Set((tags ?? []).filter((t) => typeof t === 'string' && t.trim() !== ''));
+  const hasQuery = terms.length > 0;
+  const hasTags = tagSet.size > 0;
+  // query 도 tags 도 없으면 빈 결과(전체 덤프 방지).
+  if (!hasQuery && !hasTags) return [];
 
   const targets = sourceId ? [requireSource(registry, sourceId)] : registry.list();
   const hits: SearchHit[] = [];
   for (const src of targets) {
     for (const node of src.graph.nodes.values()) {
-      const score = matchScore(node, terms);
-      if (score > 0) hits.push({ ...summarize(src.id, node), score });
+      if (hasTags && !nodeMatchesTags(node, tagSet)) continue;
+      const score = hasQuery ? matchScore(node, terms) : 1;
+      if (hasQuery && score === 0) continue;
+      hits.push({ ...summarize(src.id, node), score });
     }
   }
   hits.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   return hits.slice(0, Math.max(1, limit));
+}
+
+// ── ssot_list_tags ────────────────────────────────────────────────
+
+export interface TagCatalog {
+  /** 집계 대상 — 단일 source id 또는 'all'(전역). */
+  source: string;
+  /** 네임스페이스별 태그 목록(각 태그의 노드 수 동반). 빈 namespace 는 제외. */
+  namespaces: {
+    namespace: string;
+    tags: { tag: string; value: string; count: number }[];
+  }[];
+}
+
+/**
+ * 등록된 노드의 tags 를 네임스페이스별로 집계한다(어떤 태그가 있는지 카탈로그).
+ * count 는 그 태그를 가진 노드 수. core.collectTagGroups 재사용(웹 필터와 동일 규칙).
+ */
+export function listTags(registry: SourceRegistry, sourceId?: string): TagCatalog {
+  const targets = sourceId ? [requireSource(registry, sourceId)] : registry.list();
+  const allNodes: SsotNode[] = [];
+  for (const src of targets) {
+    for (const node of src.graph.nodes.values()) allNodes.push(node);
+  }
+  const groups = collectTagGroups(allNodes);
+  return {
+    source: sourceId ?? 'all',
+    namespaces: groups.map((g) => ({
+      namespace: g.namespace,
+      tags: g.tags.map((t) => ({ tag: t.raw, value: t.value, count: t.count })),
+    })),
+  };
 }
 
 // ── ssot_impact ───────────────────────────────────────────────────

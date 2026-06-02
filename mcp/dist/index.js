@@ -7456,6 +7456,8 @@ function buildNode(raw, errors) {
     title: raw.title ?? asString(facetsRaw.title) ?? raw.id,
     file: raw.file,
     authority: asAuthority(facetsRaw.authority),
+    // 태그: catalog top-level 이 권위. 누락 시 facets.tags 로 폴백(구형/대체 직렬화 방어).
+    tags: asStringArray(raw.tags ?? facetsRaw.tags),
     facets: buildFacets(facetsRaw, raw, errors),
     openCount: typeof raw.openCount === "number" ? raw.openCount : 0
   };
@@ -7613,6 +7615,7 @@ function mergeBodyIntoNode(node, body, errors = []) {
   if ("lifecycle" in fm) merged.facets.meta.lifecycle = asLifecycle(fm.lifecycle);
   if ("confidence" in fm) merged.facets.meta.confidence = asConfidence(fm.confidence);
   if ("lastVerified" in fm) merged.facets.meta.lastVerified = asLastVerified(fm.lastVerified);
+  if ("tags" in fm) merged.tags = asStringArray(fm.tags);
   if ("authority" in fm) merged.authority = fm.authority === "mirrored" ? "mirrored" : "authored";
   if ("source" in fm) {
     const src = asString(fm.source);
@@ -7672,6 +7675,70 @@ function reachable(graph, startId, options = {}, index) {
     depth++;
   }
   return result;
+}
+var NAMESPACE_ORDER = ["domain", "area", "status", "team", "version", "type", "risk"];
+function parseTag(raw) {
+  const idx = raw.indexOf(":");
+  if (idx <= 0) return { raw, namespace: "etc", value: raw };
+  return { raw, namespace: raw.slice(0, idx), value: raw.slice(idx + 1) };
+}
+function namespaceRank(ns) {
+  const i = NAMESPACE_ORDER.indexOf(ns);
+  return i === -1 ? NAMESPACE_ORDER.length : i;
+}
+function collectTagGroups(nodes) {
+  const byNamespace = /* @__PURE__ */ new Map();
+  for (const node of nodes) {
+    for (const raw of node.tags ?? []) {
+      const { namespace, value } = parseTag(raw);
+      let tagMap = byNamespace.get(namespace);
+      if (!tagMap) {
+        tagMap = /* @__PURE__ */ new Map();
+        byNamespace.set(namespace, tagMap);
+      }
+      const entry = tagMap.get(raw);
+      if (entry) entry.count += 1;
+      else tagMap.set(raw, { value, count: 1 });
+    }
+  }
+  const groups = [];
+  for (const [namespace, tagMap] of byNamespace) {
+    const tags = [...tagMap.entries()].map(([raw, { value, count }]) => ({ raw, value, count })).sort((a, b) => a.value.localeCompare(b.value));
+    groups.push({ namespace, tags });
+  }
+  groups.sort((a, b) => {
+    if (a.namespace === "etc") return 1;
+    if (b.namespace === "etc") return -1;
+    const ra = namespaceRank(a.namespace);
+    const rb = namespaceRank(b.namespace);
+    return ra - rb || a.namespace.localeCompare(b.namespace);
+  });
+  return groups;
+}
+function nodeMatchesTags(node, selected) {
+  if (selected.size === 0) return true;
+  const selectedByNs = /* @__PURE__ */ new Map();
+  for (const raw of selected) {
+    const { namespace } = parseTag(raw);
+    let set = selectedByNs.get(namespace);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      selectedByNs.set(namespace, set);
+    }
+    set.add(raw);
+  }
+  const nodeTags = new Set(node.tags ?? []);
+  for (const [, rawSet] of selectedByNs) {
+    let hit = false;
+    for (const raw of rawSet) {
+      if (nodeTags.has(raw)) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) return false;
+  }
+  return true;
 }
 var DEFAULT_THRESHOLDS = {
   treeContainmentRatio: 0.8,
@@ -16660,6 +16727,7 @@ __export(tools_exports, {
   getNode: () => getNode,
   impact: () => impact,
   listSources: () => listSources,
+  listTags: () => listTags,
   neighbors: () => neighbors,
   search: () => search
 });
@@ -16673,7 +16741,8 @@ function summarize(sourceId, node) {
     lifecycle: node.facets.meta.lifecycle,
     owner: node.facets.meta.owner,
     authority: node.authority,
-    openCount: node.openCount
+    openCount: node.openCount,
+    tags: node.tags
   };
 }
 var ToolError = class extends Error {
@@ -16741,19 +16810,39 @@ function matchScore(node, terms) {
   }
   return score;
 }
-function search(registry2, query, sourceId, limit = 50) {
+function search(registry2, query, sourceId, limit = 50, tags) {
   const terms = query.toLowerCase().split(/\s+/).map((t) => t.trim()).filter(Boolean);
-  if (terms.length === 0) return [];
+  const tagSet = new Set((tags ?? []).filter((t) => typeof t === "string" && t.trim() !== ""));
+  const hasQuery = terms.length > 0;
+  const hasTags = tagSet.size > 0;
+  if (!hasQuery && !hasTags) return [];
   const targets = sourceId ? [requireSource(registry2, sourceId)] : registry2.list();
   const hits = [];
   for (const src of targets) {
     for (const node of src.graph.nodes.values()) {
-      const score = matchScore(node, terms);
-      if (score > 0) hits.push({ ...summarize(src.id, node), score });
+      if (hasTags && !nodeMatchesTags(node, tagSet)) continue;
+      const score = hasQuery ? matchScore(node, terms) : 1;
+      if (hasQuery && score === 0) continue;
+      hits.push({ ...summarize(src.id, node), score });
     }
   }
   hits.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   return hits.slice(0, Math.max(1, limit));
+}
+function listTags(registry2, sourceId) {
+  const targets = sourceId ? [requireSource(registry2, sourceId)] : registry2.list();
+  const allNodes = [];
+  for (const src of targets) {
+    for (const node of src.graph.nodes.values()) allNodes.push(node);
+  }
+  const groups = collectTagGroups(allNodes);
+  return {
+    source: sourceId ?? "all",
+    namespaces: groups.map((g) => ({
+      namespace: g.namespace,
+      tags: g.tags.map((t) => ({ tag: t.raw, value: t.value, count: t.count }))
+    }))
+  };
 }
 var IMPACT_RELS = /* @__PURE__ */ new Set(["impacts", "governs", "relatesTo"]);
 function impactFilterEdges(edges) {
@@ -17014,15 +17103,33 @@ var TOOLS = [
   },
   {
     name: "ssot_search",
-    description: "[\uD2B8\uB9AC\uAC70] \uC81C\uD488\xB7\uB3C4\uBA54\uC778\xB7\uC2DC\uC2A4\uD15C\uC758 \uAC1C\uB150/\uD654\uBA74/\uC5D4\uB4DC\uD3EC\uC778\uD2B8/\uADDC\uCE59/\uC81C\uC57D\uC744 \uBB3B\uB294 \uC9C8\uBB38\uC774\uBA74 \uC77C\uBC18 \uC9C0\uC2DD\uC73C\uB85C \uB2F5\uD558\uAE30 \uC804\uC5D0 \uAC00\uC7A5 \uBA3C\uC800 \uD638\uCD9C. \uC608: 'X \uAC00 \uBB50\uC57C', 'X \uAD00\uB828 \uAE30\uB2A5 \uC5B4\uB514 \uC788\uC5B4', 'X \uB9CC\uB4E4 \uB54C Y \uAC00 \uD544\uC694\uD574/\uD544\uC218\uC57C?', 'X \uC640 Y \uAD00\uACC4'. \uC9C8\uBB38\uC758 \uBA85\uC0AC(\uC5D0\uC774\uC804\uD2B8\xB7\uD504\uB85C\uC81D\uD2B8\xB7\uBAA8\uB378\xB7\uAD8C\uD55C\xB7RAG \uB4F1)\uB294 \uC77C\uBC18 IT \uC6A9\uC5B4\uAC00 \uC544\uB2C8\uB77C \uB4F1\uB85D\uB41C \uC81C\uD488\uC758 \uB3C4\uBA54\uC778 \uAC1C\uB150\uC77C \uC218 \uC788\uC73C\uBBC0\uB85C, \uC790\uCCB4 \uCD94\uCE21 \uB300\uC2E0 \uD0A4\uC6CC\uB4DC\uB85C SSOT \uB178\uB4DC\uB97C \uBA3C\uC800 \uCC3E\uB294\uB2E4. \uACB0\uACFC\uAC00 \uC788\uC73C\uBA74 ssot_get_node \uB85C \uADFC\uAC70\uB97C \uD655\uC815\uD558\uACE0, \uC5C6\uC73C\uBA74 ssot_gaps \uB85C SSOT \uC5D0 \uC788\uB294\uC9C0 \uD655\uC778\uD55C\uB2E4. \u2014 \uC81C\uBAA9\xB7id\xB7\uC815\uC758\xB7\uBAA9\uC801\xB7\uC18C\uC720\uC790 \uBD80\uBD84\uC77C\uCE58\uB85C \uB178\uB4DC\uB97C \uAC80\uC0C9\uD55C\uB2E4. source \uC0DD\uB7B5 \uC2DC \uB4F1\uB85D\uB41C \uBAA8\uB4E0 \uC18C\uC2A4\uB97C \uC804\uC5ED \uAC80\uC0C9.",
+    description: "[\uD2B8\uB9AC\uAC70] \uC81C\uD488\xB7\uB3C4\uBA54\uC778\xB7\uC2DC\uC2A4\uD15C\uC758 \uAC1C\uB150/\uD654\uBA74/\uC5D4\uB4DC\uD3EC\uC778\uD2B8/\uADDC\uCE59/\uC81C\uC57D\uC744 \uBB3B\uB294 \uC9C8\uBB38\uC774\uBA74 \uC77C\uBC18 \uC9C0\uC2DD\uC73C\uB85C \uB2F5\uD558\uAE30 \uC804\uC5D0 \uAC00\uC7A5 \uBA3C\uC800 \uD638\uCD9C. \uC608: 'X \uAC00 \uBB50\uC57C', 'X \uAD00\uB828 \uAE30\uB2A5 \uC5B4\uB514 \uC788\uC5B4', 'X \uB9CC\uB4E4 \uB54C Y \uAC00 \uD544\uC694\uD574/\uD544\uC218\uC57C?', 'X \uC640 Y \uAD00\uACC4'. \uB610\uD55C \uD2B9\uC815 \uBD84\uB958(\uB3C4\uBA54\uC778/\uC0C1\uD0DC/\uC720\uD615)\uC758 \uB178\uB4DC\uB97C \uBAA8\uC544 \uBCF4\uB824\uB294 \uC9C8\uBB38\uC774\uBA74 tags \uC778\uC790\uB85C \uD638\uCD9C\uD55C\uB2E4 \u2014 \uC608: 'auth \uB3C4\uBA54\uC778 \uB178\uB4DC \uB2E4 \uBCF4\uC5EC\uC918'(tags=['domain:auth']), 'active \uC0C1\uD0DC \uBB50 \uC788\uC5B4'(tags=['status:active']), 'endpoint \uC720\uD615 \uC804\uBD80'(tags=['type:endpoint']). \uC5B4\uB5A4 \uD0DC\uADF8\uAC00 \uC788\uB294\uC9C0 \uBAA8\uB974\uBA74 \uBA3C\uC800 ssot_list_tags \uB85C \uD655\uC778\uD55C\uB2E4. \uC9C8\uBB38\uC758 \uBA85\uC0AC(\uC5D0\uC774\uC804\uD2B8\xB7\uD504\uB85C\uC81D\uD2B8\xB7\uBAA8\uB378\xB7\uAD8C\uD55C\xB7RAG \uB4F1)\uB294 \uC77C\uBC18 IT \uC6A9\uC5B4\uAC00 \uC544\uB2C8\uB77C \uB4F1\uB85D\uB41C \uC81C\uD488\uC758 \uB3C4\uBA54\uC778 \uAC1C\uB150\uC77C \uC218 \uC788\uC73C\uBBC0\uB85C, \uC790\uCCB4 \uCD94\uCE21 \uB300\uC2E0 \uD0A4\uC6CC\uB4DC\uB85C SSOT \uB178\uB4DC\uB97C \uBA3C\uC800 \uCC3E\uB294\uB2E4. \uACB0\uACFC\uAC00 \uC788\uC73C\uBA74 ssot_get_node \uB85C \uADFC\uAC70\uB97C \uD655\uC815\uD558\uACE0, \uC5C6\uC73C\uBA74 ssot_gaps \uB85C SSOT \uC5D0 \uC788\uB294\uC9C0 \uD655\uC778\uD55C\uB2E4. \u2014 \uC81C\uBAA9\xB7id\xB7\uC815\uC758\xB7\uBAA9\uC801\xB7\uC18C\uC720\uC790 \uBD80\uBD84\uC77C\uCE58\uB85C \uB178\uB4DC\uB97C \uAC80\uC0C9\uD558\uACE0, tags \uAC00 \uC8FC\uC5B4\uC9C0\uBA74 \uADF8 \uD0DC\uADF8\uB97C \uAC00\uC9C4 \uB178\uB4DC\uB85C \uC881\uD78C\uB2E4(\uAC19\uC740 namespace \uB0B4 OR, \uB2E4\uB978 namespace \uAC04 AND). query \uC640 tags \uB458 \uB2E4 \uC8FC\uBA74 \uB458 \uB2E4 \uB9CC\uC871\uD558\uB294 \uB178\uB4DC. source \uC0DD\uB7B5 \uC2DC \uB4F1\uB85D\uB41C \uBAA8\uB4E0 \uC18C\uC2A4\uB97C \uC804\uC5ED \uAC80\uC0C9. \uACB0\uACFC \uB178\uB4DC\uB9C8\uB2E4 tags \uB97C \uD568\uAED8 \uBC18\uD658.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "\uACF5\uBC31 \uAD6C\uBD84 \uAC80\uC0C9\uC5B4(\uBD80\uBD84\uC77C\uCE58, \uB300\uC18C\uBB38\uC790 \uBB34\uC2DC)." },
+        query: {
+          type: "string",
+          description: "\uACF5\uBC31 \uAD6C\uBD84 \uAC80\uC0C9\uC5B4(\uBD80\uBD84\uC77C\uCE58, \uB300\uC18C\uBB38\uC790 \uBB34\uC2DC). tags \uB9CC\uC73C\uB85C \uAC70\uB97C \uB54C\uB294 \uBE48 \uBB38\uC790\uC5F4 \uD5C8\uC6A9."
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: `\uD0DC\uADF8 \uD544\uD130. "namespace:value" \uD615\uC2DD(\uC608: 'domain:auth','status:active','type:endpoint'). \uAC19\uC740 namespace \uB0B4 \uC5EC\uB7EC \uAC1C\uB294 OR, \uB2E4\uB978 namespace \uAC04\uC740 AND. \uC0AC\uC6A9 \uAC00\uB2A5\uD55C \uD0DC\uADF8\uB294 ssot_list_tags \uB85C \uD655\uC778.`
+        },
         source: { type: "string", description: "\uD2B9\uC815 \uC18C\uC2A4\uB85C \uD55C\uC815(\uC0DD\uB7B5 \uC2DC \uC804\uC5ED)." },
         limit: { type: "number", description: "\uCD5C\uB300 \uACB0\uACFC \uC218(\uAE30\uBCF8 50)." }
       },
-      required: ["query"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "ssot_list_tags",
+    description: "[\uD2B8\uB9AC\uAC70] \uD2B9\uC815 \uBD84\uB958(\uB3C4\uBA54\uC778/\uC0C1\uD0DC/\uC720\uD615 \uB4F1)\uC758 \uB178\uB4DC\uB97C \uBAA8\uC544 \uBCF4\uB824\uB294\uB370 \uC5B4\uB5A4 \uD0DC\uADF8\uAC00 \uC788\uB294\uC9C0 \uBAA8\uB97C \uB54C \uAC00\uC7A5 \uBA3C\uC800 \uD638\uCD9C. ssot_search \uC758 tags \uD544\uD130\uC5D0 \uB123\uC744 \uD0DC\uADF8 \uD0A4\uB97C \uD655\uC778\uD558\uB294 \uC6A9\uB3C4. \uC608: 'auth \uB3C4\uBA54\uC778 \uB178\uB4DC \uB2E4 \uBCF4\uC5EC\uC918', 'planned \uC0C1\uD0DC \uBB50 \uC788\uC5B4' \uAC19\uC740 \uC9C8\uBB38\uC5D0\uC11C \uC815\uD655\uD55C \uD0DC\uADF8\uBA85\uC744 \uBAA8\uB974\uBA74 \uC774 \uB3C4\uAD6C\uB85C \uCE74\uD0C8\uB85C\uADF8\uB97C \uBCF8 \uB4A4 ssot_search(tags=[...]) \uB85C \uC881\uD78C\uB2E4. \u2014 \uB4F1\uB85D\uB41C \uB178\uB4DC\uC758 tags \uB97C \uB124\uC784\uC2A4\uD398\uC774\uC2A4(domain/status/type \uB4F1)\uBCC4\uB85C \uC9D1\uACC4\uD574 \uAC01 \uD0DC\uADF8\uC758 \uB178\uB4DC \uC218\uC640 \uD568\uAED8 \uBC18\uD658\uD55C\uB2E4. source \uC0DD\uB7B5 \uC2DC \uC804\uC5ED \uC9D1\uACC4.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "\uD2B9\uC815 \uC18C\uC2A4\uB85C \uD55C\uC815(\uC0DD\uB7B5 \uC2DC \uC804\uC5ED \uC9D1\uACC4)." }
+      },
       additionalProperties: false
     }
   },
@@ -17115,19 +17222,25 @@ function asOptString(v) {
 function asOptNumber(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : void 0;
 }
+function asStringArrayArg(v) {
+  return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+}
 async function dispatch(registry2, name, args) {
   switch (name) {
     case "ssot_list_sources":
       return listSources(registry2);
     case "ssot_get_node":
       return getNode(registry2, asString2(args.source, "source"), asString2(args.id, "id"));
-    case "ssot_search":
-      return search(
-        registry2,
-        asString2(args.query, "query"),
-        asOptString(args.source),
-        asOptNumber(args.limit) ?? 50
-      );
+    case "ssot_search": {
+      const tags = asStringArrayArg(args.tags);
+      const query = asOptString(args.query) ?? "";
+      if (query.trim() === "" && tags.length === 0) {
+        throw new ToolError("ssot_search \uB294 query \uB610\uB294 tags \uC911 \uD558\uB098 \uC774\uC0C1\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.");
+      }
+      return search(registry2, query, asOptString(args.source), asOptNumber(args.limit) ?? 50, tags);
+    }
+    case "ssot_list_tags":
+      return listTags(registry2, asOptString(args.source));
     case "ssot_impact":
       return impact(
         registry2,

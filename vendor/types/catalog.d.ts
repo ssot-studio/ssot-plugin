@@ -9,6 +9,8 @@ export interface RawCatalogNode {
     lifecycle?: string;
     lastVerified?: string;
     openCount?: number;
+    /** 분류 태그 — "namespace:value" 형식. catalog top-level. */
+    tags?: unknown;
     facets?: Record<string, unknown>;
 }
 export interface RawCatalogEdge {

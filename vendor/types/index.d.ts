@@ -10,5 +10,7 @@ export { DefaultCatalogLoader, loadBody, hydrateNodeBody, } from './loader.js';
 export type { SsotCatalogLoader, SsotNodeBodyLoader, LoadBodyResult, } from './loader.js';
 export { outgoingEdges, incomingEdges, neighbors, reverseNeighbors, buildAdjacencyIndex, inducedSubgraph, reachable, getNode, } from './traversal.js';
 export type { EdgeFilter, AdjacencyIndex, InducedSubgraph, TraverseOptions, } from './traversal.js';
+export { parseTag, collectTagGroups, nodeMatchesTags, filterNodeIds, NAMESPACE_LABELS, } from './tags.js';
+export type { HasTags, ParsedTag, TagNamespaceGroup } from './tags.js';
 export { classify, classifyStructure, computeSignals, detectStateSignals, isTreeShaped, DEFAULT_THRESHOLDS, } from './structure.js';
 export type { StructureKind, StructureSignals, ClassifyThresholds, ClassifyInput, ClassifyResult, } from './structure.js';

@@ -18,6 +18,7 @@ import {
   gaps,
   impact,
   listSources,
+  listTags,
   neighbors,
   search,
   flag,
@@ -62,15 +63,35 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_search',
     description:
-      "[트리거] 제품·도메인·시스템의 개념/화면/엔드포인트/규칙/제약을 묻는 질문이면 일반 지식으로 답하기 전에 가장 먼저 호출. 예: 'X 가 뭐야', 'X 관련 기능 어디 있어', 'X 만들 때 Y 가 필요해/필수야?', 'X 와 Y 관계'. 질문의 명사(에이전트·프로젝트·모델·권한·RAG 등)는 일반 IT 용어가 아니라 등록된 제품의 도메인 개념일 수 있으므로, 자체 추측 대신 키워드로 SSOT 노드를 먼저 찾는다. 결과가 있으면 ssot_get_node 로 근거를 확정하고, 없으면 ssot_gaps 로 SSOT 에 있는지 확인한다. — 제목·id·정의·목적·소유자 부분일치로 노드를 검색한다. source 생략 시 등록된 모든 소스를 전역 검색.",
+      "[트리거] 제품·도메인·시스템의 개념/화면/엔드포인트/규칙/제약을 묻는 질문이면 일반 지식으로 답하기 전에 가장 먼저 호출. 예: 'X 가 뭐야', 'X 관련 기능 어디 있어', 'X 만들 때 Y 가 필요해/필수야?', 'X 와 Y 관계'. 또한 특정 분류(도메인/상태/유형)의 노드를 모아 보려는 질문이면 tags 인자로 호출한다 — 예: 'auth 도메인 노드 다 보여줘'(tags=['domain:auth']), 'active 상태 뭐 있어'(tags=['status:active']), 'endpoint 유형 전부'(tags=['type:endpoint']). 어떤 태그가 있는지 모르면 먼저 ssot_list_tags 로 확인한다. 질문의 명사(에이전트·프로젝트·모델·권한·RAG 등)는 일반 IT 용어가 아니라 등록된 제품의 도메인 개념일 수 있으므로, 자체 추측 대신 키워드로 SSOT 노드를 먼저 찾는다. 결과가 있으면 ssot_get_node 로 근거를 확정하고, 없으면 ssot_gaps 로 SSOT 에 있는지 확인한다. — 제목·id·정의·목적·소유자 부분일치로 노드를 검색하고, tags 가 주어지면 그 태그를 가진 노드로 좁힌다(같은 namespace 내 OR, 다른 namespace 간 AND). query 와 tags 둘 다 주면 둘 다 만족하는 노드. source 생략 시 등록된 모든 소스를 전역 검색. 결과 노드마다 tags 를 함께 반환.",
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '공백 구분 검색어(부분일치, 대소문자 무시).' },
+        query: {
+          type: 'string',
+          description: '공백 구분 검색어(부분일치, 대소문자 무시). tags 만으로 거를 때는 빈 문자열 허용.',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "태그 필터. \"namespace:value\" 형식(예: 'domain:auth','status:active','type:endpoint'). 같은 namespace 내 여러 개는 OR, 다른 namespace 간은 AND. 사용 가능한 태그는 ssot_list_tags 로 확인.",
+        },
         source: { type: 'string', description: '특정 소스로 한정(생략 시 전역).' },
         limit: { type: 'number', description: '최대 결과 수(기본 50).' },
       },
-      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'ssot_list_tags',
+    description:
+      "[트리거] 특정 분류(도메인/상태/유형 등)의 노드를 모아 보려는데 어떤 태그가 있는지 모를 때 가장 먼저 호출. ssot_search 의 tags 필터에 넣을 태그 키를 확인하는 용도. 예: 'auth 도메인 노드 다 보여줘', 'planned 상태 뭐 있어' 같은 질문에서 정확한 태그명을 모르면 이 도구로 카탈로그를 본 뒤 ssot_search(tags=[...]) 로 좁힌다. — 등록된 노드의 tags 를 네임스페이스(domain/status/type 등)별로 집계해 각 태그의 노드 수와 함께 반환한다. source 생략 시 전역 집계.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', description: '특정 소스로 한정(생략 시 전역 집계).' },
+      },
       additionalProperties: false,
     },
   },
@@ -172,6 +193,10 @@ function asOptNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
+function asStringArrayArg(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
 async function dispatch(
   registry: SourceRegistry,
   name: string,
@@ -182,13 +207,16 @@ async function dispatch(
       return listSources(registry);
     case 'ssot_get_node':
       return getNode(registry, asString(args.source, 'source'), asString(args.id, 'id'));
-    case 'ssot_search':
-      return search(
-        registry,
-        asString(args.query, 'query'),
-        asOptString(args.source),
-        asOptNumber(args.limit) ?? 50,
-      );
+    case 'ssot_search': {
+      const tags = asStringArrayArg(args.tags);
+      const query = asOptString(args.query) ?? '';
+      if (query.trim() === '' && tags.length === 0) {
+        throw new ToolError('ssot_search 는 query 또는 tags 중 하나 이상이 필요합니다.');
+      }
+      return search(registry, query, asOptString(args.source), asOptNumber(args.limit) ?? 50, tags);
+    }
+    case 'ssot_list_tags':
+      return listTags(registry, asOptString(args.source));
     case 'ssot_impact':
       return impact(
         registry,

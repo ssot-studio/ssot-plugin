@@ -415,6 +415,8 @@ function buildNode(raw, errors) {
     title: raw.title ?? asString(facetsRaw.title) ?? raw.id,
     file: raw.file,
     authority: asAuthority(facetsRaw.authority),
+    // 태그: catalog top-level 이 권위. 누락 시 facets.tags 로 폴백(구형/대체 직렬화 방어).
+    tags: asStringArray(raw.tags ?? facetsRaw.tags),
     facets: buildFacets(facetsRaw, raw, errors),
     openCount: typeof raw.openCount === "number" ? raw.openCount : 0
   };
@@ -574,6 +576,7 @@ function mergeBodyIntoNode(node, body, errors = []) {
   if ("lifecycle" in fm) merged.facets.meta.lifecycle = asLifecycle(fm.lifecycle);
   if ("confidence" in fm) merged.facets.meta.confidence = asConfidence(fm.confidence);
   if ("lastVerified" in fm) merged.facets.meta.lastVerified = asLastVerified(fm.lastVerified);
+  if ("tags" in fm) merged.tags = asStringArray(fm.tags);
   if ("authority" in fm) merged.authority = fm.authority === "mirrored" ? "mirrored" : "authored";
   if ("source" in fm) {
     const src = asString(fm.source);
@@ -679,6 +682,90 @@ function reachable(graph, startId, options = {}, index) {
 }
 function getNode(graph, id) {
   return graph.nodes.get(id);
+}
+
+// src/tags.ts
+var NAMESPACE_ORDER = ["domain", "area", "status", "team", "version", "type", "risk"];
+var NAMESPACE_LABELS = {
+  domain: "\uB3C4\uBA54\uC778",
+  area: "\uC601\uC5ED",
+  status: "\uC0C1\uD0DC",
+  team: "\uD300",
+  version: "\uBC84\uC804",
+  type: "\uC720\uD615",
+  risk: "\uB9AC\uC2A4\uD06C",
+  etc: "\uAE30\uD0C0"
+};
+function parseTag(raw) {
+  const idx = raw.indexOf(":");
+  if (idx <= 0) return { raw, namespace: "etc", value: raw };
+  return { raw, namespace: raw.slice(0, idx), value: raw.slice(idx + 1) };
+}
+function namespaceRank(ns) {
+  const i = NAMESPACE_ORDER.indexOf(ns);
+  return i === -1 ? NAMESPACE_ORDER.length : i;
+}
+function collectTagGroups(nodes) {
+  const byNamespace = /* @__PURE__ */ new Map();
+  for (const node of nodes) {
+    for (const raw of node.tags ?? []) {
+      const { namespace, value } = parseTag(raw);
+      let tagMap = byNamespace.get(namespace);
+      if (!tagMap) {
+        tagMap = /* @__PURE__ */ new Map();
+        byNamespace.set(namespace, tagMap);
+      }
+      const entry = tagMap.get(raw);
+      if (entry) entry.count += 1;
+      else tagMap.set(raw, { value, count: 1 });
+    }
+  }
+  const groups = [];
+  for (const [namespace, tagMap] of byNamespace) {
+    const tags = [...tagMap.entries()].map(([raw, { value, count }]) => ({ raw, value, count })).sort((a, b) => a.value.localeCompare(b.value));
+    groups.push({ namespace, tags });
+  }
+  groups.sort((a, b) => {
+    if (a.namespace === "etc") return 1;
+    if (b.namespace === "etc") return -1;
+    const ra = namespaceRank(a.namespace);
+    const rb = namespaceRank(b.namespace);
+    return ra - rb || a.namespace.localeCompare(b.namespace);
+  });
+  return groups;
+}
+function nodeMatchesTags(node, selected) {
+  if (selected.size === 0) return true;
+  const selectedByNs = /* @__PURE__ */ new Map();
+  for (const raw of selected) {
+    const { namespace } = parseTag(raw);
+    let set = selectedByNs.get(namespace);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      selectedByNs.set(namespace, set);
+    }
+    set.add(raw);
+  }
+  const nodeTags = new Set(node.tags ?? []);
+  for (const [, rawSet] of selectedByNs) {
+    let hit = false;
+    for (const raw of rawSet) {
+      if (nodeTags.has(raw)) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) return false;
+  }
+  return true;
+}
+function filterNodeIds(nodes, selected) {
+  if (selected.size === 0) return null;
+  const ids = /* @__PURE__ */ new Set();
+  for (const node of nodes) {
+    if (nodeMatchesTags(node, selected)) ids.add(node.id);
+  }
+  return ids;
 }
 
 // src/structure.ts
@@ -859,6 +946,7 @@ export {
   DefaultCatalogLoader,
   EDGE_RELS,
   ID_PREFIX_TO_KIND,
+  NAMESPACE_LABELS,
   SSOT_KINDS,
   asConfidence,
   asLastVerified,
@@ -868,8 +956,10 @@ export {
   buildAdjacencyIndex,
   classify,
   classifyStructure,
+  collectTagGroups,
   computeSignals,
   detectStateSignals,
+  filterNodeIds,
   getNode,
   hydrateNodeBody,
   incomingEdges,
@@ -878,12 +968,14 @@ export {
   loadBody,
   mergeBodyIntoNode,
   neighbors,
+  nodeMatchesTags,
   normalize,
   normalizeRelatesToValue,
   outgoingEdges,
   parseMarkdownBody,
   parseNodeBody,
   parseRelatesString,
+  parseTag,
   parseYaml,
   reachable,
   reverseNeighbors,
