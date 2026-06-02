@@ -7056,7 +7056,10 @@ var SSOT_KINDS = [
   "Integration",
   "Invariant",
   "Decision",
-  "EngineeringRule"
+  "EngineeringRule",
+  "Screen",
+  "Endpoint",
+  "Flow"
 ];
 var ID_PREFIX_TO_KIND = {
   platform: "Platform",
@@ -7068,7 +7071,10 @@ var ID_PREFIX_TO_KIND = {
   integration: "Integration",
   invariant: "Invariant",
   decision: "Decision",
-  rule: "EngineeringRule"
+  rule: "EngineeringRule",
+  screen: "Screen",
+  endpoint: "Endpoint",
+  flow: "Flow"
 };
 var EDGE_RELS = [
   "realizedBy",
@@ -7381,7 +7387,7 @@ function splitEdgeRel(rel) {
   }
   return EDGE_RELS.includes(head) ? { rel: head } : null;
 }
-var ID_PATTERN = /^(platform|persona|domain|concept|capability|component|integration|invariant|decision|rule)\.[a-z0-9][a-z0-9-]*$/;
+var ID_PATTERN = /^(platform|persona|domain|concept|capability|component|integration|invariant|decision|rule|screen|endpoint|flow)\.[a-z0-9][a-z0-9-]*$/;
 function asKind(v, id, errors) {
   if (typeof v === "string" && SSOT_KINDS.includes(v)) {
     return v;
@@ -16712,6 +16718,9 @@ async function getNode(registry2, sourceId, id) {
       openItems: node.body.openItems
     };
   }
+  if (node.facets.meta.confidence !== "high" || node.openCount > 0) {
+    detail.captureHint = "\uC774 \uB178\uB4DC\uB294 \uBBF8\uAC80\uC99D/\uBE48\uCE78\uC785\uB2C8\uB2E4. \uC0AC\uC6A9\uC790\uAC00 \uAD00\uB828 \uC9C0\uC2DD\uC744 \uC81C\uC2DC\uD558\uBA74 ssot_flag(type=competency-gap \uB610\uB294 rationale-fragment)\uB85C \uC774\uC288 \uCEA1\uCC98\uB97C \uC81C\uC548\uD558\uC138\uC694. (MCP\uB9CC \uC4F0\uB294 \uD638\uC2A4\uD2B8\uB3C4 \uCEA1\uCC98 \uAC00\uB2A5)";
+  }
   return detail;
 }
 function matchScore(node, terms) {
@@ -16871,13 +16880,36 @@ var FLAG_TYPE_LABEL = {
   dangling: "ssot-dangling",
   contradiction: "ssot-contradiction",
   missing: "ssot-missing",
-  other: "ssot-flag"
+  other: "ssot-flag",
+  "competency-gap": "ssot-competency-gap",
+  "rationale-fragment": "ssot-rationale"
 };
 var FLAG_TYPE_DESC = {
   dangling: "\uB04A\uAE34 \uC5E3\uC9C0 \u2014 \uC874\uC7AC\uD558\uC9C0 \uC54A\uB294 \uB178\uB4DC\uB97C \uAC00\uB9AC\uD0B4(\uC5F0\uACB0 \uC644\uC804\uC131 \uACB0\uD568).",
   contradiction: "\uBAA8\uC21C \u2014 \uB450 \uB178\uB4DC/\uBD88\uBCC0\uC2DD/\uACB0\uC815\uC774 \uC11C\uB85C \uCDA9\uB3CC.",
   missing: "\uB204\uB77D \u2014 \uCF54\uB4DC/\uC0AC\uC2E4\uC740 \uC788\uC73C\uB098 SSOT \uD56D\uBAA9\uC774 \uC5C6\uC74C.",
-  other: "\uC870\uD68C \uC911 \uBC1C\uACAC\uD55C SSOT \uBB38\uC81C."
+  other: "\uC870\uD68C \uC911 \uBC1C\uACAC\uD55C SSOT \uBB38\uC81C.",
+  "competency-gap": "\uBBF8\uB2F5 \uC9C8\uBB38 \u2014 \uC870\uD68C\uB85C \uB2F5\uD558\uC9C0 \uBABB\uD55C competency question. \uBE60\uC9C4 \uC2AC\uB86F(Decision/Invariant \uB4F1) \uC2E0\uD638.",
+  "rationale-fragment": "\uADFC\uAC70 \uC870\uAC01 \u2014 \uC9C8\uBB38\uC790\uAC00 \uC790\uBC1C\uC801\uC73C\uB85C \uC81C\uC2DC\uD55C \uC758\uACAC/\uADFC\uAC70. \uAC80\uC99D \uC804 \uD6C4\uBCF4(inferred)."
+};
+var ALL_FLAG_TYPES = [
+  "dangling",
+  "contradiction",
+  "missing",
+  "other",
+  "competency-gap",
+  "rationale-fragment"
+];
+var CAPTURE_TYPES = /* @__PURE__ */ new Set([
+  "competency-gap",
+  "rationale-fragment"
+]);
+function flagFamily(type) {
+  return CAPTURE_TYPES.has(type) ? "capture" : "flag";
+}
+var DEFAULT_CONFIDENCE = {
+  "competency-gap": "unverified",
+  "rationale-fragment": "inferred"
 };
 function shq(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -16885,31 +16917,59 @@ function shq(s) {
 function flag(args) {
   const title = typeof args.title === "string" ? args.title.trim() : "";
   if (!title) throw new ToolError('\uC778\uC790 "title" \uC740 \uBE44\uC5B4\uC788\uC9C0 \uC54A\uC740 \uBB38\uC790\uC5F4\uC774\uC5B4\uC57C \uD569\uB2C8\uB2E4.');
-  const type = ["dangling", "contradiction", "missing", "other"].includes(
-    args.type
-  ) ? args.type : "other";
+  const type = ALL_FLAG_TYPES.includes(args.type) ? args.type : "other";
   const nodes = Array.isArray(args.nodes) ? args.nodes.filter((n) => typeof n === "string") : [];
   const detail = typeof args.detail === "string" && args.detail.trim() ? args.detail : "- [ ] OPEN: \uC0C1\uC138 \uC11C\uC220 \uD544\uC694.";
-  const body = [
-    `## SSOT flag: ${type}`,
-    "",
-    `- \uC885\uB958: **${type}** \u2014 ${FLAG_TYPE_DESC[type]}`,
-    nodes.length ? `- \uAD00\uB828 \uB178\uB4DC: ${nodes.map((n) => `\`${n}\``).join(", ")}` : "- \uAD00\uB828 \uB178\uB4DC: (\uBBF8\uC9C0\uC815)",
-    "",
-    "### \uC0C1\uC138",
-    "",
-    detail,
-    "",
-    "---",
-    "_\uC870\uD68C \uC911 \uBC1C\uACAC(\uC77D\uAE30\uC804\uC6A9). \uB370\uC774\uD130\uB294 \uC9C1\uC811 \uC218\uC815\uD558\uC9C0 \uC54A\uACE0 \uC774\uC288\uB85C \uB4F1\uB85D \u2014 \uC0AC\uB78C\uC774 \uD310\uB2E8._"
-  ].join("\n");
-  const labels = ["ssot-flag", FLAG_TYPE_LABEL[type]].filter((v, i, a) => a.indexOf(v) === i);
-  const parts = ["gh", "issue", "create", "--title", shq(`[ssot:flag] ${title}`), "--body", shq(body)];
+  const family = flagFamily(type);
+  let body;
+  let labels;
+  if (family === "capture") {
+    const captureType = type;
+    const question = typeof args.question === "string" && args.question.trim() ? args.question.trim() : "(\uBBF8\uC9C0\uC815)";
+    const asker = typeof args.asker === "string" && args.asker.trim() ? args.asker.trim() : "(\uBBF8\uC9C0\uC815)";
+    const confidence = typeof args.confidence === "string" && args.confidence.trim() ? args.confidence.trim() : DEFAULT_CONFIDENCE[captureType];
+    body = [
+      `## SSOT capture: ${type}`,
+      "",
+      `- \uC885\uB958: **${type}** \u2014 ${FLAG_TYPE_DESC[type]}`,
+      `- \uC6D0\uBCF8 \uC9C8\uBB38: ${question}`,
+      `- \uC9C8\uBB38\uC790(\uCD94\uC815 owner \uD6C4\uBCF4): ${asker}`,
+      nodes.length ? `- \uAD00\uB828/\uB300\uC0C1 \uB178\uB4DC: ${nodes.map((n) => `\`${n}\``).join(", ")}` : "- \uAD00\uB828/\uB300\uC0C1 \uB178\uB4DC: (\uBBF8\uC9C0\uC815 \u2014 \uC2E0\uADDC \uC2AC\uB86F \uD6C4\uBCF4)",
+      `- confidence: **${confidence}** (owner \uAC80\uC99D \uC804\uAE4C\uC9C0 \uC9C4\uC2E4 \uC544\uB2D8)`,
+      "",
+      "### \uC0C1\uC138",
+      "",
+      detail,
+      "",
+      "---",
+      "_JIT \uCEA1\uCC98(\uC77D\uAE30\uC804\uC6A9). \uBCC4\uB3C4 \uD050\uB808\uC774\uC158 \uC5D0\uC774\uC804\uD2B8\uAC00 dedup\xB7\uAD6C\uC870\uD654 \uD6C4 propose\uB85C \uC2B9\uACA9\uD55C\uB2E4. PR\uC740 \uD074\uB860\uB41C \uB808\uD3EC\uC5D0\uC11C\uB9CC. owner \uAC80\uC99D \uC804\uC5D4 inferred/unverified._"
+    ].join("\n");
+    labels = ["ssot-capture", FLAG_TYPE_LABEL[type]].filter((v, i, a) => a.indexOf(v) === i);
+  } else {
+    body = [
+      `## SSOT flag: ${type}`,
+      "",
+      `- \uC885\uB958: **${type}** \u2014 ${FLAG_TYPE_DESC[type]}`,
+      nodes.length ? `- \uAD00\uB828 \uB178\uB4DC: ${nodes.map((n) => `\`${n}\``).join(", ")}` : "- \uAD00\uB828 \uB178\uB4DC: (\uBBF8\uC9C0\uC815)",
+      "",
+      "### \uC0C1\uC138",
+      "",
+      detail,
+      "",
+      "---",
+      "_\uC870\uD68C \uC911 \uBC1C\uACAC(\uC77D\uAE30\uC804\uC6A9). \uB370\uC774\uD130\uB294 \uC9C1\uC811 \uC218\uC815\uD558\uC9C0 \uC54A\uACE0 \uC774\uC288\uB85C \uB4F1\uB85D \u2014 \uC0AC\uB78C\uC774 \uD310\uB2E8._"
+    ].join("\n");
+    labels = ["ssot-flag", FLAG_TYPE_LABEL[type]].filter((v, i, a) => a.indexOf(v) === i);
+  }
+  const titlePrefix = family === "capture" ? "[ssot:capture] " : "[ssot:flag] ";
+  const fullTitle = `${titlePrefix}${title}`;
+  const parts = ["gh", "issue", "create", "--title", shq(fullTitle), "--body", shq(body)];
   for (const l of labels) parts.push("--label", shq(l));
   if (args.repo) parts.push("--repo", shq(args.repo));
   return {
     type,
-    title: `[ssot:flag] ${title}`,
+    family,
+    title: fullTitle,
     labels,
     body,
     ghCommand: parts.join(" "),
@@ -17010,18 +17070,31 @@ var TOOLS = [
   },
   {
     name: "ssot_flag",
-    description: "\uC870\uD68C \uC911 \uBC1C\uACAC\uD55C SSOT \uBB38\uC81C(dangling/contradiction/missing/other)\uB97C GitHub \uC774\uC288\uB85C \uB4F1\uB85D\uD560 \uBCF8\uBB38 + gh \uCEE4\uB9E8\uB4DC\uB85C \uAD6C\uC131\uD55C\uB2E4. MCP\uB294 \uC77D\uAE30\uC804\uC6A9\uC774\uBBC0\uB85C \uC774\uC288\uB97C \uC9C1\uC811 \uC0DD\uC131\uD558\uC9C0 \uC54A\uACE0 \uBCF8\uBB38\xB7\uCEE4\uB9E8\uB4DC \uD14D\uC2A4\uD2B8\uB9CC \uBC18\uD658\uD55C\uB2E4 \u2014 \uC2E4\uC81C \uC0DD\uC131\uC740 \uC0AC\uB78C/\uC2A4\uD0AC\uC774 \uC218\uD589.",
+    description: "\uC870\uD68C \uC911 \uBC1C\uACAC\uD55C \uBB38\uC81C + JIT \uCEA1\uCC98(\uBBF8\uB2F5 \uC9C8\uBB38/\uADFC\uAC70 \uC870\uAC01)\uB97C GitHub \uC774\uC288\uB85C \uB4F1\uB85D\uD560 \uBCF8\uBB38 + gh \uCEE4\uB9E8\uB4DC\uB85C \uAD6C\uC131\uD55C\uB2E4. \uBB38\uC81C(flag): dangling/contradiction/missing/other. \uCEA1\uCC98(capture, schema-on-read): competency-gap(\uBBF8\uB2F5 \uC9C8\uBB38)\xB7rationale-fragment(\uADFC\uAC70 \uC870\uAC01) \u2014 \uC870\uD68C/\uB300\uD654 \uC911 \uC0DD\uAE34 \uBCC0\uACBD\uAC70\uB9AC\uB97C \uADF8 \uC2DC\uC810\uC5D0 \uC774\uC288\uB85C\uB9CC \uC801\uC7AC(PR/\uBE0C\uB79C\uCE58/\uCEE4\uBC0B \uAE08\uC9C0, owner \uAC80\uC99D \uC804\uC5D4 inferred/unverified). MCP\uB294 \uC77D\uAE30\uC804\uC6A9\uC774\uBBC0\uB85C \uC774\uC288\uB97C \uC9C1\uC811 \uC0DD\uC131\uD558\uC9C0 \uC54A\uACE0 \uBCF8\uBB38\xB7\uCEE4\uB9E8\uB4DC \uD14D\uC2A4\uD2B8\uB9CC \uBC18\uD658\uD55C\uB2E4 \u2014 \uC2E4\uC81C \uC0DD\uC131\uC740 \uC0AC\uB78C/\uC2A4\uD0AC\uC774 \uC218\uD589.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string", description: "\uC774\uC288 \uC81C\uBAA9(\uC9E7\uC740 \uC694\uC57D)." },
         type: {
           type: "string",
-          enum: ["dangling", "contradiction", "missing", "other"],
-          description: "\uBB38\uC81C \uC885\uB958(\uAE30\uBCF8 other)."
+          enum: [
+            "dangling",
+            "contradiction",
+            "missing",
+            "other",
+            "competency-gap",
+            "rationale-fragment"
+          ],
+          description: "\uC885\uB958(\uAE30\uBCF8 other). \uBB38\uC81C: dangling/contradiction/missing/other. \uCEA1\uCC98: competency-gap(\uBBF8\uB2F5 \uC9C8\uBB38)\xB7rationale-fragment(\uADFC\uAC70 \uC870\uAC01)."
         },
         detail: { type: "string", description: "\uC0C1\uC138 \uC124\uBA85(\uB9C8\uD06C\uB2E4\uC6B4)." },
-        nodes: { type: "array", items: { type: "string" }, description: "\uAD00\uB828 \uB178\uB4DC id \uBAA9\uB85D." },
+        nodes: { type: "array", items: { type: "string" }, description: "\uAD00\uB828/\uB300\uC0C1 \uB178\uB4DC id \uBAA9\uB85D." },
+        question: { type: "string", description: "\uCEA1\uCC98 \uC2DC \uC6D0\uBCF8 \uC870\uD68C \uC9C8\uBB38(competency-gap/rationale-fragment)." },
+        asker: { type: "string", description: "\uCEA1\uCC98 \uC2DC \uC9C8\uBB38\uC790(\uCD94\uC815 owner \uD6C4\uBCF4)." },
+        confidence: {
+          type: "string",
+          description: "\uCEA1\uCC98 \uC2E0\uB8B0\uB3C4(unverified|inferred). \uC0DD\uB7B5 \uC2DC \uC885\uB958\uBCC4 \uAE30\uBCF8\uAC12."
+        },
         repo: { type: "string", description: "\uB300\uC0C1 \uB808\uD3EC(owner/name). \uC0DD\uB7B5 \uC2DC \uD604\uC7AC \uB808\uD3EC." }
       },
       required: ["title"],
@@ -17079,6 +17152,9 @@ async function dispatch(registry2, name, args) {
         type: asOptString(args.type),
         detail: asOptString(args.detail),
         nodes: Array.isArray(args.nodes) ? args.nodes.filter((n) => typeof n === "string") : [],
+        question: asOptString(args.question),
+        asker: asOptString(args.asker),
+        confidence: asOptString(args.confidence),
         repo: asOptString(args.repo)
       });
     default:

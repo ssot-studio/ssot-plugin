@@ -44,7 +44,8 @@ description: >-
 /ssot propose "<변경>"      # 변경을 분류(정합/충돌/근간/범위외)해 PR/이슈/ADR로 라우팅
 /ssot ingest <문서경로>     # 외부 기획 문서(자유형식)를 SSOT 노드/엣지로 매핑 → propose로 위임
 /ssot sync-lifecycle       # "코드 생겼는데 planned"를 검출 → active 전환 PR 제안(자동 전환 금지)
-/ssot flag "<문제>"         # 조회 중 발견한 문제(dangling/모순/누락)를 gh 이슈로 등록
+/ssot flag "<문제>"         # 조회 중 발견한 문제(dangling/모순/누락) 또는 JIT 캡처(competency-gap/rationale-fragment)를 gh 이슈로 등록
+/ssot curate               # ssot-capture 이슈 큐를 dedup·클러스터·디스크립터화 → propose로 위임 (별도 에이전트 주기 실행 권장)
 ```
 
 `<Kind>` ∈ `Platform · Persona · Domain · Concept · Capability · SystemComponent · Integration · Invariant · Decision`
@@ -143,6 +144,20 @@ fi
 2. `_catalog.json` + 관련 대상 파일 본문을 읽어 **그래프 트래버설로 답을 조립**한다. 영향 분석 질문은 대상에서 시작해 `impacts`/`relatesTo`/`governs`/`consumesApi`를 따라 역·정방향 확장.
 3. 답에는 반드시 **근거 대상 id 목록**과 **confidence 라벨**을 붙인다. 추적 중 끊긴 링크/빈칸을 만나면 "이 부분은 SSOT에 아직 없음(빈칸)"이라고 정직하게 표시한다 — 추측으로 메우지 않는다.
 
+#### JIT 캡처 (ask 중 변경거리 적재 — 이슈 전용)
+
+`ask`는 **답 먼저** 하고(질문을 가로채지 않음), 그 다음 변경거리가 있으면 캡처를 *제안*한다. 캡처는 GitHub 이슈로만 적재한다 — **PR/브랜치/커밋 금지**(조회 세션은 보통 데이터 레포를 클론하지 않은 상태).
+
+| 단계 | 규칙 |
+|------|------|
+| **답 먼저** | confidence·빈칸을 정직히 표시하며 먼저 답한다. 캡처가 답을 지연·대체하지 않는다. |
+| **EV 게이트** | 답이 why/decision급 빈칸(미답 competency question)에 의존했거나 질문자가 근거/의견을 자발적으로 제시한 경우에만 캡처 제안. **value(슬롯) × P(질문자=owner) > 방해비용**일 때만 — trivial 필드엔 침묵. |
+| **owner 추론은 추측** | 단정 금지. dialog로 확인("이거 당신 결정 같은데 맞아요/아니면 누구?"). 확인 전 내용은 `inferred`. |
+| **oracle 역량** | 질문자가 owner가 아니면 답은 `high` 불가 → `competency-gap`(빈 슬롯 신호)으로만 로깅. |
+| **적재 수단** | `node scripts/flag.mjs --type competency-gap\|rationale-fragment --question <q> --asker <a> --confidence <unverified\|inferred> [--nodes a,b] [--apply]` (또는 MCP `ssot_flag`). **이슈만** 만든다. |
+
+schema-on-read: 캡처 시점엔 포맷을 강제하지 않는다 — 나중에 `curate`가 dedup·구조화해 `propose`로 승격한다.
+
 ## 거버넌스 모드 — 변경을 "제안"으로 라우팅
 
 핵심 원칙: **MCP는 읽기전용, 스킬은 제안(쓰기).** 거버넌스 모드는 SSOT 데이터를 직접 `main`에 쓰지 않는다 — 항상 브랜치 + `gh pr create`(라벨 `ai-proposed`) 또는 `gh issue create`로 내놓고, **사람이 검토·머지**한다. `main` 직접 push는 절대 금지.
@@ -187,10 +202,38 @@ fi
 
 ### `flag "<문제>"`
 
-조회 중 발견한 SSOT 문제(끊긴 엣지·모순·누락)를 GitHub 이슈로 등록한다.
+조회 중 발견한 SSOT **문제**(문제 계열) 또는 변경거리 **캡처**(캡처 계열)를 GitHub 이슈로 등록한다. JIT 캡처는 **이슈 전용** — schema-on-read로 적재만 하고, 나중에 `curate`가 구조화한다. **PR/브랜치 금지.**
 
-- **스킬**: `node scripts/flag.mjs --type <dangling|contradiction|missing|other> --title <t> --detail <md> [--nodes a,b] [--repo <o/n>] [--apply]` (또는 `--json <file|->`). 기본은 이슈 본문 + `gh issue create` 커맨드를 **제시**, `--apply`로 실행.
-- **MCP**: `ssot_flag` 도구(읽기전용)는 **데이터·원격을 일절 건드리지 않고** 이슈 본문 + `ghCommand` 텍스트만 반환한다. 실제 생성은 사람/스킬(`flag.mjs --apply`)이 한다. 본문·라벨 규약은 `flag.mjs`와 단일 정의로 일치.
+| 계열 | type | 라벨 | 제목 prefix | 설명 |
+|------|------|------|-------------|------|
+| **flag**(문제) | `dangling` | `ssot-flag` | `[ssot:flag] ` | 끊긴 엣지 — 존재하지 않는 노드를 가리킴 |
+| | `contradiction` | `ssot-flag` | `[ssot:flag] ` | 노드 간 모순 |
+| | `missing` | `ssot-flag` | `[ssot:flag] ` | 있어야 할 노드/슬롯 누락 |
+| | `other` | `ssot-flag` | `[ssot:flag] ` | 기타 구조 문제 |
+| **capture**(캡처) | `competency-gap` | `ssot-capture` | `[ssot:capture] ` | 미답 질문 — 조회로 답하지 못한 competency question. 빈 슬롯(Decision/Invariant 등) 신호. 기본 `confidence=unverified` |
+| | `rationale-fragment` | `ssot-capture` | `[ssot:capture] ` | 근거 조각 — 질문자가 자발적으로 제시한 의견/근거. 검증 전 후보 `confidence=inferred` |
+
+**캡처 메타 필드**(family=capture): `--question`(원본 조회 질문), `--asker`(추정 owner 후보), `--confidence`(`unverified`|`inferred`), `--nodes`(대상/관련 노드 id, 기존 필드 재사용). owner 검증 전엔 진실이 아니다 — `high` 승격 불가.
+
+- **스킬**: `node scripts/flag.mjs --type <dangling|contradiction|missing|other|competency-gap|rationale-fragment> --title <t> --detail <md> [--nodes a,b] [--question <q>] [--asker <a>] [--confidence <unverified|inferred>] [--repo <o/n>] [--apply]` (또는 `--json <file|->`). 기본은 이슈 본문 + `gh issue create` 커맨드를 **제시**, `--apply`로 실행.
+- **MCP**: `ssot_flag` 도구(읽기전용)는 **데이터·원격을 일절 건드리지 않고** 이슈 본문 + `ghCommand` 텍스트만 반환한다. 실제 생성은 사람/스킬(`flag.mjs --apply`)이 한다. 본문·라벨·prefix 규약은 `flag.mjs`와 **단일 정의로 100% 일치**(한쪽만 바꾸면 안 됨).
+
+### `curate`
+
+`ssot-capture` 라벨 이슈 큐(JIT 캡처 적재물)를 주기적으로 검토해 **dedup·클러스터 → 변경 디스크립터 구성 → `propose`에 위임**한다. 별도 큐레이션 에이전트로 트리거/cadence에 맞춰 실행하길 권장한다.
+
+1. **조회**: `gh issue list --label ssot-capture --state open`로 캡처 큐를 가져온다.
+2. **클러스터(LLM)**: 같은 갭을 가리키는 이슈를 묶는다(같은 갭 → 노드 1개). 중복은 합치고, 흩어진 근거 조각은 한 대상으로 모은다.
+3. **디스크립터 작성(LLM)**: 클러스터별로 `propose`의 변경 디스크립터 JSON을 만든다.
+   - `competency-gap` → 빈 슬롯 scaffold(`- [ ] OPEN`).
+   - `rationale-fragment` → `inferred` 내용 초안.
+   - 둘 다 **owner 검증 전 `high` 불가** — `confidence: unverified|inferred` 유지.
+4. **위임**: `node scripts/propose.mjs <ssotDir> --change <json> [--root ..] [--repo o/n]`. `propose`에 수렴해 같은 라우팅·안전장치를 탄다 — **별도 쓰기 경로를 만들지 않는다**(단일 수렴).
+
+| 가드 | 규칙 |
+|------|------|
+| **클론 가드**(절대 제약) | 데이터 레포가 **로컬 클론된 경우에만** `propose --apply`(브랜치+PR) 가능. 클론 안 됐으면 PR 불가 → 이슈 통합/정리만. 기본 **dry-run(제시)**, PR은 최소로. |
+| **swamp 가드** | curate가 실제로 주기적으로 돌지 않으면 이슈가 썩어 vaporization을 이슈트래커로 옮긴 것일 뿐이다. 트리거/cadence로 실행을 보장하라. |
 
 ## 경계 (정직하게)
 - **결정적(스크립트)**: 구조 무결성 — 끊긴 링크, 측면 누락, id 중복, 경로 실존, cadence.

@@ -105,6 +105,11 @@ export interface NodeDetail extends NodeSummary {
     sections: { heading: string; level: number }[];
     openItems: { checked: boolean; text: string }[];
   };
+  /**
+   * 노드가 미검증(confidence !== 'high')이거나 미완(openCount > 0)일 때, 조회 호스트에게
+   * JIT 캡처를 유도하는 힌트. MCP만 쓰는 호스트도 ssot_flag 로 이슈 캡처가 가능함을 안내.
+   */
+  captureHint?: string;
 }
 
 export async function getNode(
@@ -129,6 +134,10 @@ export async function getNode(
       sections: node.body.sections.map((s) => ({ heading: s.heading, level: s.level })),
       openItems: node.body.openItems,
     };
+  }
+  if (node.facets.meta.confidence !== 'high' || node.openCount > 0) {
+    detail.captureHint =
+      '이 노드는 미검증/빈칸입니다. 사용자가 관련 지식을 제시하면 ssot_flag(type=competency-gap 또는 rationale-fragment)로 이슈 캡처를 제안하세요. (MCP만 쓰는 호스트도 캡처 가능)';
   }
   return detail;
 }
@@ -401,23 +410,68 @@ export function gaps(registry: SourceRegistry, sourceId: string): GapsResult {
 // 실제 생성은 사람/스킬(scripts/flag.mjs --apply)이 수행한다. skills/ssot/scripts/flag.mjs 와
 // 동일한 본문·라벨 규약을 쓴다(단일 정의).
 
-export type FlagType = 'dangling' | 'contradiction' | 'missing' | 'other';
+// 두 계열(family)을 다룬다:
+//   · 문제(flag)   : dangling/contradiction/missing/other — 조회 중 발견한 SSOT 결함.
+//   · 캡처(capture): competency-gap/rationale-fragment — JIT 캡처(schema-on-read).
+//                     조회/대화 중 생긴 "변경거리"를 그 시점에 이슈로만 적재(PR/브랜치/커밋 금지).
+//                     owner 검증 전엔 진실이 아니다(inferred/unverified) — 별도 큐레이션 에이전트가
+//                     dedup·구조화 후 propose 로 승격한다.
+// skills/ssot/scripts/flag.mjs 와 본문·라벨·제목 prefix·family·추가필드를 100% 동일하게 유지한다.
+
+export type FlagType =
+  | 'dangling'
+  | 'contradiction'
+  | 'missing'
+  | 'other'
+  | 'competency-gap'
+  | 'rationale-fragment';
 
 const FLAG_TYPE_LABEL: Record<FlagType, string> = {
   dangling: 'ssot-dangling',
   contradiction: 'ssot-contradiction',
   missing: 'ssot-missing',
   other: 'ssot-flag',
+  'competency-gap': 'ssot-competency-gap',
+  'rationale-fragment': 'ssot-rationale',
 };
 const FLAG_TYPE_DESC: Record<FlagType, string> = {
   dangling: '끊긴 엣지 — 존재하지 않는 노드를 가리킴(연결 완전성 결함).',
   contradiction: '모순 — 두 노드/불변식/결정이 서로 충돌.',
   missing: '누락 — 코드/사실은 있으나 SSOT 항목이 없음.',
   other: '조회 중 발견한 SSOT 문제.',
+  'competency-gap':
+    '미답 질문 — 조회로 답하지 못한 competency question. 빠진 슬롯(Decision/Invariant 등) 신호.',
+  'rationale-fragment': '근거 조각 — 질문자가 자발적으로 제시한 의견/근거. 검증 전 후보(inferred).',
+};
+
+const ALL_FLAG_TYPES: readonly FlagType[] = [
+  'dangling',
+  'contradiction',
+  'missing',
+  'other',
+  'competency-gap',
+  'rationale-fragment',
+];
+
+type FlagFamily = 'flag' | 'capture';
+const CAPTURE_TYPES: ReadonlySet<FlagType> = new Set<FlagType>([
+  'competency-gap',
+  'rationale-fragment',
+]);
+function flagFamily(type: FlagType): FlagFamily {
+  return CAPTURE_TYPES.has(type) ? 'capture' : 'flag';
+}
+
+type CaptureConfidence = 'unverified' | 'inferred';
+const DEFAULT_CONFIDENCE: Record<'competency-gap' | 'rationale-fragment', CaptureConfidence> = {
+  'competency-gap': 'unverified',
+  'rationale-fragment': 'inferred',
 };
 
 export interface FlagResult {
   type: FlagType;
+  /** 계열: 문제(flag) vs JIT 캡처(capture). */
+  family: FlagFamily;
   title: string;
   labels: string[];
   /** gh issue 본문 마크다운. */
@@ -437,39 +491,78 @@ export function flag(args: {
   detail?: string;
   nodes?: string[];
   repo?: string;
+  question?: string;
+  asker?: string;
+  confidence?: string;
 }): FlagResult {
   const title = typeof args.title === 'string' ? args.title.trim() : '';
   if (!title) throw new ToolError('인자 "title" 은 비어있지 않은 문자열이어야 합니다.');
-  const type: FlagType = (['dangling', 'contradiction', 'missing', 'other'] as const).includes(
-    args.type as FlagType,
-  )
+  const type: FlagType = ALL_FLAG_TYPES.includes(args.type as FlagType)
     ? (args.type as FlagType)
     : 'other';
   const nodes = Array.isArray(args.nodes) ? args.nodes.filter((n) => typeof n === 'string') : [];
-  const detail = typeof args.detail === 'string' && args.detail.trim() ? args.detail : '- [ ] OPEN: 상세 서술 필요.';
+  const detail =
+    typeof args.detail === 'string' && args.detail.trim() ? args.detail : '- [ ] OPEN: 상세 서술 필요.';
+  const family = flagFamily(type);
 
-  const body = [
-    `## SSOT flag: ${type}`,
-    '',
-    `- 종류: **${type}** — ${FLAG_TYPE_DESC[type]}`,
-    nodes.length ? `- 관련 노드: ${nodes.map((n) => `\`${n}\``).join(', ')}` : '- 관련 노드: (미지정)',
-    '',
-    '### 상세',
-    '',
-    detail,
-    '',
-    '---',
-    '_조회 중 발견(읽기전용). 데이터는 직접 수정하지 않고 이슈로 등록 — 사람이 판단._',
-  ].join('\n');
+  let body: string;
+  let labels: string[];
+  if (family === 'capture') {
+    const captureType = type as 'competency-gap' | 'rationale-fragment';
+    const question =
+      typeof args.question === 'string' && args.question.trim() ? args.question.trim() : '(미지정)';
+    const asker =
+      typeof args.asker === 'string' && args.asker.trim() ? args.asker.trim() : '(미지정)';
+    const confidence =
+      typeof args.confidence === 'string' && args.confidence.trim()
+        ? args.confidence.trim()
+        : DEFAULT_CONFIDENCE[captureType];
+    body = [
+      `## SSOT capture: ${type}`,
+      '',
+      `- 종류: **${type}** — ${FLAG_TYPE_DESC[type]}`,
+      `- 원본 질문: ${question}`,
+      `- 질문자(추정 owner 후보): ${asker}`,
+      nodes.length
+        ? `- 관련/대상 노드: ${nodes.map((n) => `\`${n}\``).join(', ')}`
+        : '- 관련/대상 노드: (미지정 — 신규 슬롯 후보)',
+      `- confidence: **${confidence}** (owner 검증 전까지 진실 아님)`,
+      '',
+      '### 상세',
+      '',
+      detail,
+      '',
+      '---',
+      '_JIT 캡처(읽기전용). 별도 큐레이션 에이전트가 dedup·구조화 후 propose로 승격한다. PR은 클론된 레포에서만. owner 검증 전엔 inferred/unverified._',
+    ].join('\n');
+    labels = ['ssot-capture', FLAG_TYPE_LABEL[type]].filter((v, i, a) => a.indexOf(v) === i);
+  } else {
+    body = [
+      `## SSOT flag: ${type}`,
+      '',
+      `- 종류: **${type}** — ${FLAG_TYPE_DESC[type]}`,
+      nodes.length ? `- 관련 노드: ${nodes.map((n) => `\`${n}\``).join(', ')}` : '- 관련 노드: (미지정)',
+      '',
+      '### 상세',
+      '',
+      detail,
+      '',
+      '---',
+      '_조회 중 발견(읽기전용). 데이터는 직접 수정하지 않고 이슈로 등록 — 사람이 판단._',
+    ].join('\n');
+    labels = ['ssot-flag', FLAG_TYPE_LABEL[type]].filter((v, i, a) => a.indexOf(v) === i);
+  }
 
-  const labels = ['ssot-flag', FLAG_TYPE_LABEL[type]].filter((v, i, a) => a.indexOf(v) === i);
-  const parts = ['gh', 'issue', 'create', '--title', shq(`[ssot:flag] ${title}`), '--body', shq(body)];
+  const titlePrefix = family === 'capture' ? '[ssot:capture] ' : '[ssot:flag] ';
+  const fullTitle = `${titlePrefix}${title}`;
+  const parts = ['gh', 'issue', 'create', '--title', shq(fullTitle), '--body', shq(body)];
   for (const l of labels) parts.push('--label', shq(l));
   if (args.repo) parts.push('--repo', shq(args.repo));
 
   return {
     type,
-    title: `[ssot:flag] ${title}`,
+    family,
+    title: fullTitle,
     labels,
     body,
     ghCommand: parts.join(' '),

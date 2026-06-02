@@ -113,18 +113,32 @@ const TOOLS: Tool[] = [
   {
     name: 'ssot_flag',
     description:
-      '조회 중 발견한 SSOT 문제(dangling/contradiction/missing/other)를 GitHub 이슈로 등록할 본문 + gh 커맨드로 구성한다. MCP는 읽기전용이므로 이슈를 직접 생성하지 않고 본문·커맨드 텍스트만 반환한다 — 실제 생성은 사람/스킬이 수행.',
+      '조회 중 발견한 문제 + JIT 캡처(미답 질문/근거 조각)를 GitHub 이슈로 등록할 본문 + gh 커맨드로 구성한다. 문제(flag): dangling/contradiction/missing/other. 캡처(capture, schema-on-read): competency-gap(미답 질문)·rationale-fragment(근거 조각) — 조회/대화 중 생긴 변경거리를 그 시점에 이슈로만 적재(PR/브랜치/커밋 금지, owner 검증 전엔 inferred/unverified). MCP는 읽기전용이므로 이슈를 직접 생성하지 않고 본문·커맨드 텍스트만 반환한다 — 실제 생성은 사람/스킬이 수행.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: '이슈 제목(짧은 요약).' },
         type: {
           type: 'string',
-          enum: ['dangling', 'contradiction', 'missing', 'other'],
-          description: '문제 종류(기본 other).',
+          enum: [
+            'dangling',
+            'contradiction',
+            'missing',
+            'other',
+            'competency-gap',
+            'rationale-fragment',
+          ],
+          description:
+            '종류(기본 other). 문제: dangling/contradiction/missing/other. 캡처: competency-gap(미답 질문)·rationale-fragment(근거 조각).',
         },
         detail: { type: 'string', description: '상세 설명(마크다운).' },
-        nodes: { type: 'array', items: { type: 'string' }, description: '관련 노드 id 목록.' },
+        nodes: { type: 'array', items: { type: 'string' }, description: '관련/대상 노드 id 목록.' },
+        question: { type: 'string', description: '캡처 시 원본 조회 질문(competency-gap/rationale-fragment).' },
+        asker: { type: 'string', description: '캡처 시 질문자(추정 owner 후보).' },
+        confidence: {
+          type: 'string',
+          description: '캡처 신뢰도(unverified|inferred). 생략 시 종류별 기본값.',
+        },
         repo: { type: 'string', description: '대상 레포(owner/name). 생략 시 현재 레포.' },
       },
       required: ['title'],
@@ -190,6 +204,9 @@ async function dispatch(
         type: asOptString(args.type),
         detail: asOptString(args.detail),
         nodes: Array.isArray(args.nodes) ? args.nodes.filter((n): n is string => typeof n === 'string') : [],
+        question: asOptString(args.question),
+        asker: asOptString(args.asker),
+        confidence: asOptString(args.confidence),
         repo: asOptString(args.repo),
       });
     default:

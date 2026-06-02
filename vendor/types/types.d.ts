@@ -1,5 +1,5 @@
-/** 스키마 enum 의 10 종 kind (frontmatter 표기 그대로). */
-export type SsotKind = 'Platform' | 'Persona' | 'Domain' | 'Concept' | 'Capability' | 'SystemComponent' | 'Integration' | 'Invariant' | 'Decision' | 'EngineeringRule';
+/** 스키마 enum 의 13 종 kind (frontmatter 표기 그대로). */
+export type SsotKind = 'Platform' | 'Persona' | 'Domain' | 'Concept' | 'Capability' | 'SystemComponent' | 'Integration' | 'Invariant' | 'Decision' | 'EngineeringRule' | 'Screen' | 'Endpoint' | 'Flow';
 export declare const SSOT_KINDS: readonly SsotKind[];
 /** id prefix(소문자) → kind 매핑. 스키마 id 패턴의 prefix 와 1:1. */
 export declare const ID_PREFIX_TO_KIND: Readonly<Record<string, SsotKind>>;

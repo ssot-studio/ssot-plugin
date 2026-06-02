@@ -9,7 +9,10 @@ var SSOT_KINDS = [
   "Integration",
   "Invariant",
   "Decision",
-  "EngineeringRule"
+  "EngineeringRule",
+  "Screen",
+  "Endpoint",
+  "Flow"
 ];
 var ID_PREFIX_TO_KIND = {
   platform: "Platform",
@@ -21,7 +24,10 @@ var ID_PREFIX_TO_KIND = {
   integration: "Integration",
   invariant: "Invariant",
   decision: "Decision",
-  rule: "EngineeringRule"
+  rule: "EngineeringRule",
+  screen: "Screen",
+  endpoint: "Endpoint",
+  flow: "Flow"
 };
 var EDGE_RELS = [
   "realizedBy",
@@ -340,7 +346,7 @@ function splitEdgeRel(rel) {
   }
   return EDGE_RELS.includes(head) ? { rel: head } : null;
 }
-var ID_PATTERN = /^(platform|persona|domain|concept|capability|component|integration|invariant|decision|rule)\.[a-z0-9][a-z0-9-]*$/;
+var ID_PATTERN = /^(platform|persona|domain|concept|capability|component|integration|invariant|decision|rule|screen|endpoint|flow)\.[a-z0-9][a-z0-9-]*$/;
 function asKind(v, id, errors) {
   if (typeof v === "string" && SSOT_KINDS.includes(v)) {
     return v;

@@ -96,6 +96,23 @@
     "Flow":            ["purpose", "servesPersona", "relatesTo", "owner", "confidence"]
   },
 
+  "x-id-prefix-to-kind": {
+    "_comment": "id prefix(소문자) → kind 의 단일 진실. id pattern 의 prefix alternation 과 kind enum 을 잇는 매핑이며, verify 가 id-prefix↔kind 일관성(예: endpoint. → kind:Endpoint)을 검사할 때 사용. core(types.ts ID_PREFIX_TO_KIND) 와 동기화돼야 한다.",
+    "platform": "Platform",
+    "persona": "Persona",
+    "domain": "Domain",
+    "concept": "Concept",
+    "capability": "Capability",
+    "component": "SystemComponent",
+    "integration": "Integration",
+    "invariant": "Invariant",
+    "decision": "Decision",
+    "rule": "EngineeringRule",
+    "screen": "Screen",
+    "endpoint": "Endpoint",
+    "flow": "Flow"
+  },
+
   "x-id-reference-fields": {
     "_comment": "값이 '대상 id'를 가리키는 필드들. verify가 연결 완전성(끊긴 엣지)을 검사할 때 사용. relatesTo는 객체의 .to가 id.",
     "idList": ["servesPersona", "governedBy", "realizedBy", "dependsOn", "impacts", "decidedBy", "governs"],

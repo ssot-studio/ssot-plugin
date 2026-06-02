@@ -2,7 +2,7 @@
 #
 # extract-endpoints.sh — api-spec 마크다운 표를 Endpoint 표면 TSV 로 추출.
 #
-# 대상 표 스키마 (air-studio-front/docs/api-spec/*-endpoints.md 공통):
+# 대상 표 스키마 (<repo>/docs/api-spec/*-endpoints.md 공통):
 #   | Repository | Method(fn) | HTTP | Path | Client | Request Type | Response Type |
 # HTTP 컬럼(3)이 메서드, Path 컬럼(4)이 경로. 표 1행 = Endpoint 표면행 1개.
 # 헤더행(`| Repository |`)과 구분선(`|---`)은 제외.
