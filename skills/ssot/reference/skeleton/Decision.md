@@ -12,6 +12,8 @@ confidence: high       # 결정은 기록 시점에 확정이므로 보통 high
 lastVerified: ""       # [축④] YYYY-MM-DD (결정일)
 ---
 
+<!-- 작성 고도(methodology §0): 비개발자도 읽는 자연어로 — 무엇을·왜·누가·어떤 규칙·무슨 데이터. 코드(테이블·필드·경로·SQL) 옮겨적기 금지(식별자는 provenance/근거에만). 코드 분기/의도 불명은 판정 말고 OPEN. -->
+
 > Decision은 append-only다. 결정이 바뀌면 이 파일을 고치지 말고 새 Decision을 만들어 `supersedes`로 잇는다. (스냅샷 원칙 — 히스토리는 여기와 git에만)
 
 <!-- 본문 섹션은 x-required-sections-by-kind.Decision 와 1:1 정렬. verify가 누락 섹션을 검사한다. -->
