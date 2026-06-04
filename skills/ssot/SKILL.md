@@ -53,7 +53,7 @@ description: >-
 
 질의 처리 절차:
 
-1. **`ssot_search`** 로 질문 속 개념을 SSOT에서 찾는다(소스 모르면 `ssot_list_sources`로 확인. 데이터 소스 id 예: `air-studio`). 도메인 용어는 §2단계대로 노드로 해석.
+1. **`ssot_search`** 로 질문 속 개념을 SSOT에서 찾는다(소스 모르면 `ssot_list_sources`로 확인. 데이터 소스 id 예: `my-project`). 도메인 용어는 §2단계대로 노드로 해석.
 2. 찾은 노드를 **`ssot_get_node`** 로 4축 facet+본문까지 읽고, 질문 유형에 맞는 트래버설을 더한다:
    - "X 바꾸면 영향? / 어디까지 흔들리나" → **`ssot_impact`** (impacts/relatesTo/governs 파급)
    - "X와 Y 관계 / X 주변 / 무엇과 엮였나" → **`ssot_neighbors`**

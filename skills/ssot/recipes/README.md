@@ -71,11 +71,10 @@ extract-repositories.sh <repositoriesSrcDir> [repoRoot]
 REC=<SK>/recipes
 SCRIPTS=<SK>/scripts
 
-# 1) 추출 — 표면 TSV 생성. 여러 소스를 하나로 합친다.
-"$REC/extract-routes.sh"        <REPO>/apps/app/src/routes   app   <REPO> >  /tmp/surface.tsv
-"$REC/extract-routes.sh"        <REPO>/apps/admin/src/routes admin <REPO> >> /tmp/surface.tsv
-"$REC/extract-routes.sh"        <REPO>/apps/chat/src/routes  chat  <REPO> >> /tmp/surface.tsv
-for f in spring fastapi service-runtime core-runtime workbench; do
+# 1) 추출 — 표면 TSV 생성. 여러 소스를 이어 붙인다(>> 로 append).
+"$REC/extract-routes.sh"        <REPO>/apps/<app>/src/routes  <app>  <REPO> >  /tmp/surface.tsv
+# 앱이 여러 개면 같은 식으로 >> 로 이어 붙인다 — appAbbr 가 앱 간 id 충돌을 막는다.
+for f in <spec1> <spec2>; do   # api-spec md 파일들 (백엔드 종류별 등)
   "$REC/extract-endpoints.sh"   <REPO>/docs/api-spec/$f-endpoints.md          <REPO> >> /tmp/surface.tsv
 done
 "$REC/extract-repositories.sh"  <REPO>/packages/repositories/src             <REPO> >> /tmp/surface.tsv
