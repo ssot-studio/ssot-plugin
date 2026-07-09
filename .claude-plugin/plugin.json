@@ -1,6 +1,6 @@
 {
   "name": "ssot",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "제품·도메인·시스템 맥락 SSOT 생성·검증·시각화·질의 플러그인",
   "author": { "name": "Seungwoo321" },
   "homepage": "https://github.com/ssot-studio/ssot-plugin",
