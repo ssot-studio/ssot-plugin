@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   }
   if (registry.list().length === 0) {
     process.stderr.write(
-      '[ssot-mcp] 소스 미등록 — ssot-sources.json 을 SSOT_SOURCES_FILE 경로(${CLAUDE_PLUGIN_DATA}/ssot-sources.json)에 만들거나 SSOT_SOURCES env 로 등록하세요.\n',
+      '[ssot-mcp] 소스 미등록 — 프로젝트 루트에 .claude/ssot-sources.json 을 만들거나(개인 오버라이드는 .claude/ssot-sources.local.json), SSOT_SOURCES_FILE 로 경로 지정 / SSOT_SOURCES env 로 인라인 등록하세요.\n',
     );
   }
 

@@ -105,8 +105,8 @@ export function listSources(registry: SourceRegistry): {
       loadErrors: registry.loadErrors,
       guidance:
         `등록된 SSOT 소스가 없습니다 (설정 출처: ${registry.origin}). ` +
-        'ssot-sources.json 을 SSOT_SOURCES_FILE 경로(${CLAUDE_PLUGIN_DATA}/ssot-sources.json)에 ' +
-        '만들거나 SSOT_SOURCES env 로 소스를 등록하세요.',
+        '프로젝트 루트에 .claude/ssot-sources.json 을 만들거나(개인 오버라이드는 .claude/ssot-sources.local.json), ' +
+        'SSOT_SOURCES_FILE 로 경로를 지정하거나 SSOT_SOURCES env 로 소스를 등록하세요.',
     };
   }
   return { sources, loadErrors: registry.loadErrors };

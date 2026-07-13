@@ -6,7 +6,7 @@
 // core 의 normalize/traversal/structure 만 재사용한다.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, resolve, join, extname } from 'node:path';
 
 /** 지원 소스 타입. git / local-fs 우선 구현, 나머지는 인터페이스 + stub. */
 export type SourceType = 'git' | 'local-fs' | 'rest' | 'web' | 'jira' | 'confluence';
@@ -106,6 +106,8 @@ export interface ResolvedConfig extends McpConfig {
 const ENV_INLINE = 'SSOT_SOURCES';
 const ENV_FILE = 'SSOT_SOURCES_FILE';
 const DEFAULT_FILENAME = 'ssot-sources.json';
+/** 프로젝트별 기본 소스 설정 디렉토리(프로젝트 루트 기준). */
+const DEFAULT_SUBDIR = '.claude';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -230,12 +232,62 @@ function validateSource(
   }
 }
 
+/** 프로젝트 루트 = CLAUDE_PROJECT_DIR(치환된 실제 경로) 우선, 없으면 현재 cwd. */
+function projectRoot(cwd: string): string {
+  const dir = process.env.CLAUDE_PROJECT_DIR;
+  if (dir && dir.trim() !== '' && !isUnsubstituted(dir)) return dir;
+  return cwd;
+}
+
+/** ${...} 플레이스홀더가 치환되지 않고 남았는지(치환 실패) 검사. */
+function isUnsubstituted(value: string): boolean {
+  return value.includes('${');
+}
+
+/** 파일 경로의 `.local` 형제 경로. 예: <dir>/ssot-sources.json → <dir>/ssot-sources.local.json */
+function localSibling(path: string): string {
+  const ext = extname(path);
+  const base = ext ? path.slice(0, -ext.length) : path;
+  return `${base}.local${ext}`;
+}
+
+/**
+ * 후보 파일을 `.local` 우선으로 해석한다.
+ * 같은 폴더의 `<name>.local<ext>`(개인 오버라이드, gitignore 대상)가 있으면 그것을,
+ * 없으면 원본 파일을, 둘 다 없으면 null.
+ */
+function resolveWithLocal(path: string): string | null {
+  const local = localSibling(path);
+  if (existsSync(local)) return local;
+  if (existsSync(path)) return path;
+  return null;
+}
+
+/**
+ * 설정 파일 후보 목록(우선순위 順). 각 후보는 resolveWithLocal 로 `.local` 형제를 우선 적용한다.
+ *   1) SSOT_SOURCES_FILE(치환된 값)                  — 사용자 명시. 있으면 이것만 본다.
+ *   2) <CLAUDE_PROJECT_DIR|cwd>/.claude/ssot-sources.json — 프로젝트별 기본
+ *   3) <cwd>/ssot-sources.json                        — 하위호환(단독 실행)
+ */
+function fileCandidates(cwd: string): string[] {
+  const fileEnv = process.env[ENV_FILE];
+  if (fileEnv && fileEnv.trim() !== '' && !isUnsubstituted(fileEnv)) {
+    return [isAbsolute(fileEnv) ? fileEnv : resolve(cwd, fileEnv)];
+  }
+  return [
+    join(projectRoot(cwd), DEFAULT_SUBDIR, DEFAULT_FILENAME),
+    resolve(cwd, DEFAULT_FILENAME),
+  ];
+}
+
 /**
  * 설정 로드 우선순위:
- *   1) SSOT_SOURCES        — 인라인 JSON 문자열
- *   2) SSOT_SOURCES_FILE   — 설정 파일 경로
- *   3) <cwd>/ssot-sources.json
- * 어느 것도 없으면 빈 sources 로 origin='(none)' 반환(서버는 뜨되 소스 0).
+ *   1) SSOT_SOURCES              — 인라인 JSON 문자열(env)
+ *   2) SSOT_SOURCES_FILE         — 명시 파일 경로(+ `.local` 형제 우선)
+ *   3) <프로젝트 루트>/.claude/ssot-sources.json  — 프로젝트별 기본(+ `.local`)
+ *   4) <cwd>/ssot-sources.json  — 하위호환(+ `.local`)
+ * 어느 것도 없으면 빈 sources(서버는 뜨되 소스 0 — 신규/미등록의 정상 상태).
+ * 파일이 존재하는데 파싱/검증 실패면 loadFromFile 안에서 throw(사용자 실수 노출).
  */
 export function loadConfig(cwd: string = process.cwd()): ResolvedConfig {
   const inline = process.env[ENV_INLINE];
@@ -244,23 +296,13 @@ export function loadConfig(cwd: string = process.cwd()): ResolvedConfig {
     return { ...validateConfig(parsed, ENV_INLINE), origin: ENV_INLINE };
   }
 
-  const fileEnv = process.env[ENV_FILE];
-  if (fileEnv && fileEnv.trim() !== '') {
-    const path = isAbsolute(fileEnv) ? fileEnv : resolve(cwd, fileEnv);
-    // 파일 부재 = 신규 설치/소스 미등록의 정상 상태 → throw 하지 않고 graceful 빈 소스.
-    // 파일이 있는데 깨진 경우(파싱/검증 실패)는 사용자 실수이므로 loadFromFile 안에서 throw.
-    if (!existsSync(path)) {
-      return { sources: [], origin: `파일 없음: ${path} — 소스 미등록` };
-    }
-    return loadFromFile(path);
+  const candidates = fileCandidates(cwd);
+  for (const cand of candidates) {
+    const resolved = resolveWithLocal(cand);
+    if (resolved) return loadFromFile(resolved);
   }
 
-  const defaultPath = resolve(cwd, DEFAULT_FILENAME);
-  if (existsSync(defaultPath)) {
-    return loadFromFile(defaultPath);
-  }
-
-  return { sources: [], origin: '(none)' };
+  return { sources: [], origin: `파일 없음: ${candidates[0]} — 소스 미등록` };
 }
 
 /**

@@ -7,7 +7,7 @@
 #
 # 사용법:
 #   extract-routes.sh <routesDir> <appAbbr> [repoRoot]
-#     <routesDir>  앱의 src/routes 절대/상대 경로 (예: apps/air-studio-app/src/routes)
+#     <routesDir>  앱의 src/routes 절대/상대 경로 (예: apps/web-app/src/routes)
 #     <appAbbr>    앱 약자 (예: app | admin | chat) — id prefix 및 slug 충돌 방지용
 #     [repoRoot]   provenance 경로를 이 루트 기준 상대경로로 표기 (생략 시 입력 경로 그대로)
 #

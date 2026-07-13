@@ -6888,7 +6888,7 @@ var require_dist = __commonJS({
 
 // src/config.ts
 import { readFileSync, existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, join, extname } from "node:path";
 var SOURCE_TYPES = [
   "git",
   "local-fs",
@@ -6900,6 +6900,7 @@ var SOURCE_TYPES = [
 var ENV_INLINE = "SSOT_SOURCES";
 var ENV_FILE = "SSOT_SOURCES_FILE";
 var DEFAULT_FILENAME = "ssot-sources.json";
+var DEFAULT_SUBDIR = ".claude";
 function isRecord(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -7011,25 +7012,47 @@ function validateSource(raw, index, origin, seen) {
       throw new Error(`${where} \uBBF8\uC9C0\uC6D0 type: ${type}`);
   }
 }
+function projectRoot(cwd) {
+  const dir = process.env.CLAUDE_PROJECT_DIR;
+  if (dir && dir.trim() !== "" && !isUnsubstituted(dir)) return dir;
+  return cwd;
+}
+function isUnsubstituted(value) {
+  return value.includes("${");
+}
+function localSibling(path) {
+  const ext = extname(path);
+  const base = ext ? path.slice(0, -ext.length) : path;
+  return `${base}.local${ext}`;
+}
+function resolveWithLocal(path) {
+  const local = localSibling(path);
+  if (existsSync(local)) return local;
+  if (existsSync(path)) return path;
+  return null;
+}
+function fileCandidates(cwd) {
+  const fileEnv = process.env[ENV_FILE];
+  if (fileEnv && fileEnv.trim() !== "" && !isUnsubstituted(fileEnv)) {
+    return [isAbsolute(fileEnv) ? fileEnv : resolve(cwd, fileEnv)];
+  }
+  return [
+    join(projectRoot(cwd), DEFAULT_SUBDIR, DEFAULT_FILENAME),
+    resolve(cwd, DEFAULT_FILENAME)
+  ];
+}
 function loadConfig(cwd = process.cwd()) {
   const inline = process.env[ENV_INLINE];
   if (inline && inline.trim() !== "") {
     const parsed = parseJson(inline, ENV_INLINE);
     return { ...validateConfig(parsed, ENV_INLINE), origin: ENV_INLINE };
   }
-  const fileEnv = process.env[ENV_FILE];
-  if (fileEnv && fileEnv.trim() !== "") {
-    const path = isAbsolute(fileEnv) ? fileEnv : resolve(cwd, fileEnv);
-    if (!existsSync(path)) {
-      return { sources: [], origin: `\uD30C\uC77C \uC5C6\uC74C: ${path} \u2014 \uC18C\uC2A4 \uBBF8\uB4F1\uB85D` };
-    }
-    return loadFromFile(path);
+  const candidates = fileCandidates(cwd);
+  for (const cand of candidates) {
+    const resolved = resolveWithLocal(cand);
+    if (resolved) return loadFromFile(resolved);
   }
-  const defaultPath = resolve(cwd, DEFAULT_FILENAME);
-  if (existsSync(defaultPath)) {
-    return loadFromFile(defaultPath);
-  }
-  return { sources: [], origin: "(none)" };
+  return { sources: [], origin: `\uD30C\uC77C \uC5C6\uC74C: ${candidates[0]} \u2014 \uC18C\uC2A4 \uBBF8\uB4F1\uB85D` };
 }
 function loadFromFile(path) {
   if (!existsSync(path)) {
@@ -7919,9 +7942,9 @@ function classify(input, thresholds = DEFAULT_THRESHOLDS) {
 // src/adapters/local-fs.ts
 import { readFile } from "node:fs/promises";
 import { existsSync as existsSync2 } from "node:fs";
-import { isAbsolute as isAbsolute2, join, resolve as resolve2 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join2, resolve as resolve2 } from "node:path";
 async function readCatalog(ssotDir) {
-  const path = join(ssotDir, "_catalog.json");
+  const path = join2(ssotDir, "_catalog.json");
   if (!existsSync2(path)) {
     throw new Error(`_catalog.json \uC5C6\uC74C: ${path}`);
   }
@@ -7963,7 +7986,7 @@ import { spawn } from "node:child_process";
 import { existsSync as existsSync3 } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join as join2, resolve as resolve3 } from "node:path";
+import { join as join3, resolve as resolve3 } from "node:path";
 function runGit(args, cwd) {
   return new Promise((res) => {
     const child = spawn("git", args, { cwd, env: process.env });
@@ -7986,11 +8009,11 @@ async function git(args, cwd, what) {
   }
 }
 function defaultCacheDir(id) {
-  return join2(tmpdir(), "ssot-mcp", id);
+  return join3(tmpdir(), "ssot-mcp", id);
 }
 async function ensureRepo(config2) {
   const cacheRoot = config2.cacheDir ? resolve3(config2.cacheDir) : defaultCacheDir(config2.id);
-  const gitDir = join2(cacheRoot, ".git");
+  const gitDir = join3(cacheRoot, ".git");
   const pull = config2.pull !== false;
   if (!existsSync3(gitDir)) {
     await mkdir(cacheRoot, { recursive: true });
@@ -8015,7 +8038,7 @@ var gitAdapter = {
   type: "git",
   async load(config2) {
     const repoRoot = await ensureRepo(config2);
-    const ssotDir = join2(repoRoot, config2.ssotPath ?? "docs/ssot");
+    const ssotDir = join3(repoRoot, config2.ssotPath ?? "docs/ssot");
     return loadLocalFs(ssotDir);
   }
 };
@@ -16779,7 +16802,7 @@ function listSources(registry2) {
     return {
       sources,
       loadErrors: registry2.loadErrors,
-      guidance: `\uB4F1\uB85D\uB41C SSOT \uC18C\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4 (\uC124\uC815 \uCD9C\uCC98: ${registry2.origin}). ssot-sources.json \uC744 SSOT_SOURCES_FILE \uACBD\uB85C(\${CLAUDE_PLUGIN_DATA}/ssot-sources.json)\uC5D0 \uB9CC\uB4E4\uAC70\uB098 SSOT_SOURCES env \uB85C \uC18C\uC2A4\uB97C \uB4F1\uB85D\uD558\uC138\uC694.`
+      guidance: `\uB4F1\uB85D\uB41C SSOT \uC18C\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4 (\uC124\uC815 \uCD9C\uCC98: ${registry2.origin}). \uD504\uB85C\uC81D\uD2B8 \uB8E8\uD2B8\uC5D0 .claude/ssot-sources.json \uC744 \uB9CC\uB4E4\uAC70\uB098(\uAC1C\uC778 \uC624\uBC84\uB77C\uC774\uB4DC\uB294 .claude/ssot-sources.local.json), SSOT_SOURCES_FILE \uB85C \uACBD\uB85C\uB97C \uC9C0\uC815\uD558\uAC70\uB098 SSOT_SOURCES env \uB85C \uC18C\uC2A4\uB97C \uB4F1\uB85D\uD558\uC138\uC694.`
     };
   }
   return { sources, loadErrors: registry2.loadErrors };
@@ -17336,7 +17359,7 @@ async function main() {
   }
   if (registry2.list().length === 0) {
     process.stderr.write(
-      "[ssot-mcp] \uC18C\uC2A4 \uBBF8\uB4F1\uB85D \u2014 ssot-sources.json \uC744 SSOT_SOURCES_FILE \uACBD\uB85C(${CLAUDE_PLUGIN_DATA}/ssot-sources.json)\uC5D0 \uB9CC\uB4E4\uAC70\uB098 SSOT_SOURCES env \uB85C \uB4F1\uB85D\uD558\uC138\uC694.\n"
+      "[ssot-mcp] \uC18C\uC2A4 \uBBF8\uB4F1\uB85D \u2014 \uD504\uB85C\uC81D\uD2B8 \uB8E8\uD2B8\uC5D0 .claude/ssot-sources.json \uC744 \uB9CC\uB4E4\uAC70\uB098(\uAC1C\uC778 \uC624\uBC84\uB77C\uC774\uB4DC\uB294 .claude/ssot-sources.local.json), SSOT_SOURCES_FILE \uB85C \uACBD\uB85C \uC9C0\uC815 / SSOT_SOURCES env \uB85C \uC778\uB77C\uC778 \uB4F1\uB85D\uD558\uC138\uC694.\n"
     );
   }
   await startMcpServer(registry2);

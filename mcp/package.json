@@ -1,6 +1,6 @@
 {
   "name": "@ssot-studio/mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "SSOT 멀티소스 MCP 서버 — core(vendor) 재사용, SDK 번들로 clone-동작",
   "license": "MIT",
   "type": "module",
