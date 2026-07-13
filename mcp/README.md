@@ -85,7 +85,7 @@ export SSOT_SOURCES='{"sources":[{"id":"local","type":"local-fs","dir":"./docs/s
 
 ## 등록법 (MCP 클라이언트)
 
-빌드 후(`dist/index.js`) stdio 서버로 등록한다. 레포 루트 `.mcp.json` 은 이미 이 서버를 가리킨다:
+빌드 후(`dist/index.js`) stdio 서버로 등록한다. 플러그인은 `.claude-plugin/plugin.json` 의 `mcpServers` 필드로 이 서버를 선언한다(루트 `.mcp.json` 을 쓰지 않는다 — 레포를 프로젝트로 열 때 `${CLAUDE_PLUGIN_ROOT}` 미치환으로 깨지는 것을 피하기 위함):
 
 ```jsonc
 {
