@@ -1,22 +1,27 @@
 ## 🤖 airpilot run-gate 결과 (로컬 · 서브에이전트)
 
-### ❌ review · 지적 [feature] — 핵심 수정(캐시 origin 검증)의 방향은 안전측(fail-safe)이나, url 문자열 완전일치 비교로 인한 불필요 재클론과 사용자 지정 cacheDir 파괴 위험·무경고 삭제가 남는다.
-- 🟡 `git.ts`:73 — url 정규화 없이 문자열 완전일치(origin !== config.url)로 비교한다. 같은 레포라도 표기가 다르면(.git 접미사 유무, 후행 슬래시, ssh(git@host:o/r) <-> https(https://host/o/r), 호스트 대소문자, 자격정보 포함 url) 매번 '다른 레포'로 판정돼 캐시를 지우고 재클론한다. 방향은 안전측(옛 원천을 쓰지 않음)이라 차단급은 아니지만, 선언 url 표기만 바꿔도 매 load 마다 full re-clone 이 도는 성능 함정이다. → 비교 전 정규화: 후행 / 와 .git 제거, ssh scp-like 표기를 https 형태로 환산, 호스트 소문자화, 자격정보 제거 후 비교.
-- 🟡 `git.ts`:74 — rm(cacheRoot, {recursive:true, force:true}) 는 config.cacheDir 를 존중한다(삭제 대상이 항상 cacheRoot 이고 그 밖으로 나가지 않는다). 다만 사용자가 cacheDir 을 자기 실작업 레포/공유 디렉토리로 잘못 지정하면(그 디렉토리는 .git 이 있고 origin 이 다르다) 그 디렉토리를 통째로 삭제한다. 종전 코드는 그 상황에서 fetch 만 했기에 파괴적이지 않았다 — 이번 변경이 새로 만든 파괴 경로다. 가드가 'origin && origin !== url' 뿐이라 '캐시가 아닌 진짜 레포'를 구별하지 못한다. → 캐시 소유 마커(클론 직후 cacheRoot 에 .ssot-mcp-cache 스탬프 기록)를 두고 그 마커가 있는 디렉토리만 rm 한다. 마커가 없으면 삭제 대신 에러로 중단해 cacheDir 오설정을 사용자가 인지하게 한다.
-- 🟢 `git.ts`:74 — 캐시 폐기·재클론이 완전히 조용하다. 원천 url 이 바뀌었다는 사실은 SSOT 도구에서 사용자가 알아야 할 사건인데 경고/로그가 남지 않는다. → stderr 에 '소스 <id>: 캐시 origin(<old>) != 선언 url(<new>) -> 캐시 폐기 후 재클론' 1줄 기록.
-- ℹ️ `git.ts`:49 — 중점검증 확인 결과 — cachedOrigin() 은 안전하다. runGit 은 spawn error 도 child.on('error') 로 흡수해 code 127 로 resolve 하므로 throw 하지 않고(git.ts:33), 비-레포/origin 부재/git 미설치 모두 code!==0 -> null 로 귀결된다. null 이면 삭제 분기를 타지 않아 기존 동작(fetch/pull)이 유지된다. 즉 '조건 과잉'은 위 정규화 부재 한 갈래뿐이고, 비-레포 오삭제는 없다. → 없음(확인 완료).
+대상: unpushed 커밋 `c04a18a` — `.claude-plugin/marketplace.json` · `mcp/src/adapters/git.ts` · `mcp/dist/index.js`
 
-### ❌ consistency-check · 지적 [feature] — 릴리즈 매니페스트 버전 불일치 — plugin.json 은 0.7.2 인데 marketplace.json 은 0.7.1 에 멈춰 있다(직전 릴리즈 커밋은 둘을 함께 올렸음).
-- 🔴 `marketplace.json`:9 — 이 커밋이 .claude-plugin/plugin.json 과 mcp/package.json 을 0.7.2 로 올리면서 .claude-plugin/marketplace.json 의 plugins[0].version 은 0.7.1 로 남겼다. 직전 릴리즈 커밋 af5a717 은 plugin.json 과 marketplace.json 을 함께 0.7.1 로 올렸으므로 두 파일은 커플링된 릴리즈 매니페스트이며 이번 누락은 규약 위반이다. marketplace.json 은 설치 소스가 광고하는 버전이라, 0.7.1 로 남으면 이 사일런트 결함 수정(0.7.2)이 마켓플레이스 소비자에게 업데이트로 노출되지 않는다 — '고쳤는데 배포되지 않는' 상태. → .claude-plugin/marketplace.json 의 plugins[0].version 을 0.7.2 로 올려 plugin.json 과 일치시킨다.
-- 🟢 `package.json`:3 — mcp/package.json 이 0.6.0 -> 0.7.2 로 MINOR 두 칸을 건너뛰며 플러그인 버전 라인에 강제 정렬됐다. 미배포 내부 패키지라 실해는 없으나, 독립 라인이던 것을 말없이 통합한 것이라 의도가 기록되지 않았다. → 두 버전을 한 라인으로 묶는 것이 의도라면 릴리즈 절차(README/CLAUDE.md)에 '플러그인·mcp·marketplace 세 매니페스트를 동시에 올린다'를 명문화한다.
+### ✅ consistency-check · 통과 [feature] — 직전 차단 결함(marketplace.json 0.7.1 잔존) 해소. 버전 선언 3곳이 모두 0.7.2 로 정합.
+- ℹ️ `marketplace.json`:10 — plugins[0].version = 0.7.2 로 plugin.json:3 · mcp/package.json:3 과 일치. 레포 전체 `0.7.1` 잔존 문자열 0건, JSON 파싱 정상. → 없음(확인 완료).
+- 🟢 `marketplace.json`:10 — 세 매니페스트가 한 버전 라인으로 커플링돼 있으나 그 규약이 문서화·강제되지 않는다. 직전 결함이 정확히 이 미문서화 커플링에서 나왔고(한 곳 누락), 이번 커밋은 값만 맞췄을 뿐 재발 방지 장치는 없다. → 릴리즈 절차에 '세 매니페스트 동시 상향'을 명문화하거나 세 값 일치를 검사하는 스크립트로 결정적으로 강제한다(후속 사안, 차단 아님).
 
-### ✅ impact-analysis · 통과 [impact] — ensureRepo 는 gitAdapter.load 단일 호출처이며 공개 계약 변경 없음. 다만 여러 소스가 같은 cacheDir 를 공유하면 캐시 thrash 가능(설정 오용 경로).
-- 🟢 `git.ts`:67 — cacheDir 은 소스별 선택 필드이고 기본값이 <tmp>/ssot-mcp/<id> 로 id 격리라 충돌이 없다. 그러나 서로 다른 url 을 가진 두 git 소스에 같은 cacheDir 을 명시하면, 각 load 가 상대의 캐시를 origin 불일치로 판정해 지우고 재클론하는 thrash 가 된다(변경 전에는 조용히 서로의 원천을 오독하는 더 나쁜 상태였으므로 회귀는 아니다). 동시 load 시 rm 과 다른 요청의 읽기가 경합할 수도 있다. → config 로드 시 git 소스 간 cacheDir 중복을 검증해 거부하거나, cacheDir 하위에 id 서브디렉토리를 강제한다.
+### ✅ review · 통과 [feature] — 소유 표식으로 파괴 경로가 fail-closed 로 닫히고 sameRepo 정규화로 thrash 해소. 중점검증 3건 모두 실측 안전 확인.
+- ℹ️ `git.ts`:91 — **중점검증 ① 기존 캐시 회귀 없음.** 표식 검사가 `userChoseDir &&` 로 **사용자 지정 cacheDir 에만** 걸린다. 표식 없는 기존 기본 캐시(tmpdir/ssot-mcp/&lt;id&gt;)는 종전대로 삭제·재클론되고 그 재클론이 표식을 심는다(:112). url 이 안 바뀐 기존 캐시는 sameRepo 로 삭제 분기를 아예 타지 않아 표식 없이도 영구 정상 — 표식은 삭제 가드에만 쓰이므로 부재가 무해하다. → 없음(확인 완료).
+- ℹ️ `git.ts`:62 — **중점검증 ② sameRepo 오판 여지 없음.** 정규화가 호스트를 문자열에 보존하므로 우려된 '호스트가 다른데 경로만 같은 경우'(github.com/o/r vs gitlab.com/o/r)는 정규화 후에도 다른 문자열이라 false positive 가 나지 않는다(9종 케이스 실행 검증). 반대 미스매치(ssh↔https·자격정보·포트)는 안전측 false negative 이고 1회 재클론 후 origin 이 수렴해 thrash 로 남지 않는다. → 없음(확인 완료).
+- ℹ️ `git.ts`:112 — **중점검증 ③ `.ssot-cache` 는 checkout/reset 에 영향받지 않음.** 표식은 untracked 파일이고 `git checkout -f`·`git reset --hard`(:119-120)는 untracked 를 제거하지 않는다. 실제 레포로 clone→표식→fetch→checkout -f→reset --hard 를 돌려 표식 생존(`?? .ssot-cache`)을 확인했다. 레포에 `git clean` 호출이 0건이라 표식을 지우는 경로가 아예 없다. → 없음(확인 완료).
+- 🟢 `git.ts`:92 — 표식 없는 사용자 cacheDir + url 변경 시 throw(의도된 fail-closed, 방향은 옳다)인데 에러가 **해소 방법**을 알려주지 않는다. 0.7.2 이전에 사용자 cacheDir 로 만들어진 정상 캐시는 표식이 없어 url 변경 순간 하드 스톱을 맞고 스스로 복구할 길을 모른다. → 메시지에 조치 1줄 추가: '우리가 만든 캐시가 맞다면 디렉토리를 지우거나 그 안에 .ssot-cache 를 만든 뒤 재실행하라.'
+- 🟢 `git.ts`:62 — norm 이 url **전체**를 소문자화한다. 대소문자를 구별하는 자체호스팅 서버에서 경로만 대소문자가 다른 별개 레포는 같다고 판정돼, 막으려던 '옛 원천을 조용히 쓰는' 실패가 그 좁은 경우에 남는다(주요 호스트는 경로 대소문자 비민감이라 노출 가능성 매우 낮음). → scheme·host 만 소문자화하고 경로는 원형 유지.
+- 🟢 `git.ts`:49 — 소유 판정이 파일 '존재'만 본다. 원천 레포가 우연히 `.ssot-cache` 를 추적하면 위조 표식으로 작동해 삭제 가드를 통과시킨다(병리적). → 표식 내용(클론 시 기록한 url)까지 확인해 소유로 인정한다.
 
-### ✅ test · 자문 [feature] — 레포에 테스트 하네스 자체가 없다(mcp/package.json scripts = build·typecheck 뿐). 이번 변경만의 결함은 아니나 새 분기 5종이 무검증이다.
-- 🟢 `git.ts`:66 — ensureRepo 의 새 분기(origin 일치->유지 / 불일치->재클론 / origin null(비-레포·remote 없음)->유지 / url 표기차 / 사용자 cacheDir)가 전부 자동검증 없이 수동 e2e 확인에만 의존한다. 레포에 테스트 러너가 없어 이번 변경만의 책임으로 보긴 어렵다. → tmp 에 로컬 bare 레포 2개를 만들어 origin 교체 시나리오를 도는 최소 통합 테스트 도입.
+### ✅ impact-analysis · 통과 [impact] — 변경이 gitAdapter 내부(ensureRepo)에 국한, 공개 계약 불변.
+- ℹ️ `git.ts`:131 — ensureRepo 의 유일한 호출처는 gitAdapter.load 이고 반환 계약(작업트리 루트) 동일. 표식은 레포 루트에 놓이는데 로더는 ssotPath(기본 docs/ssot) 하위만 스캔하므로 SSOT 노드 집합에 섞이지 않는다. → 없음.
+- 🟢 `git.ts`:84 — 서로 다른 url 의 두 소스에 같은 cacheDir 을 명시하면 여전히 상호 thrash 가능(설정 오용 경로). 이번 변경으로 악화되지 않았고 오히려 표식 없으면 throw 로 멈춘다. → config 로드 시 cacheDir 중복을 거부하거나 하위에 &lt;id&gt; 서브디렉토리를 강제한다.
 
-### ✅ normalize · 자문 [standard] — 스타일·명명은 파일 기존 관습과 일치. typecheck 통과, dist 번들은 src 재빌드 결과와 일치(재빌드 시 diff 없음).
+### ✅ test · 자문 [feature] — 레포에 테스트 하네스가 없다(scripts = build·typecheck). 이번 커밋만의 결함 아님.
+- 🟢 `git.ts`:82 — ensureRepo 의 5분기가 자동 회귀 테스트로 고정돼 있지 않아, 이후 리팩터가 파괴 가드를 조용히 되돌릴 수 있다. → 로컬 레포 2개로 origin 교체·표식 유무 시나리오를 도는 최소 통합 테스트 도입. 특히 '표식 없는 사용자 cacheDir 은 삭제되지 않는다'를 회귀로 고정할 가치가 크다.
+
+### ✅ normalize · 자문 [standard] — `npx tsc --noEmit` 통과(exit 0). 커밋된 `mcp/dist/index.js` 가 src 재빌드 결과와 일치(재빌드 후 dist diff 공백) — dist 표류 없음. 스타일·명명은 기존 관습과 일치.
 
 ---
-### 🔴 차단 — 아래 critical/high 를 고친 뒤 커밋하세요.
+### 🟢 통과 — 차단 결함 0건. 직전 게이트의 blocker 1 + medium 2 가 모두 해소됐고 신규 결함 없음. 남은 지적은 전부 low/자문이라 푸시를 막지 않는다.
