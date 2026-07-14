@@ -7984,7 +7984,7 @@ var localFsAdapter = {
 // src/adapters/git.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync3 } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as join3, resolve as resolve3 } from "node:path";
 function runGit(args, cwd) {
@@ -8011,10 +8011,20 @@ async function git(args, cwd, what) {
 function defaultCacheDir(id) {
   return join3(tmpdir(), "ssot-mcp", id);
 }
+async function cachedOrigin(cacheRoot) {
+  const r = await runGit(["remote", "get-url", "origin"], cacheRoot);
+  return r.code === 0 ? r.stdout.trim() || null : null;
+}
 async function ensureRepo(config2) {
   const cacheRoot = config2.cacheDir ? resolve3(config2.cacheDir) : defaultCacheDir(config2.id);
   const gitDir = join3(cacheRoot, ".git");
   const pull = config2.pull !== false;
+  if (existsSync3(gitDir)) {
+    const origin = await cachedOrigin(cacheRoot);
+    if (origin && origin !== config2.url) {
+      await rm(cacheRoot, { recursive: true, force: true });
+    }
+  }
   if (!existsSync3(gitDir)) {
     await mkdir(cacheRoot, { recursive: true });
     const cloneArgs = ["clone", "--depth", "1"];
