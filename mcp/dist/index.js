@@ -8017,7 +8017,10 @@ async function cachedOrigin(cacheRoot) {
   return r.code === 0 ? r.stdout.trim() || null : null;
 }
 function sameRepo(a, b) {
-  const norm = (u) => u.trim().replace(/\/+$/, "").replace(/\.git$/, "").toLowerCase();
+  const norm = (u) => u.trim().replace(/\/+$/, "").replace(/\.git$/, "").replace(
+    /^([A-Za-z+.-]+:\/\/)?([^/]*)/,
+    (_m, scheme, host) => `${(scheme ?? "").toLowerCase()}${host.toLowerCase()}`
+  );
   return norm(a) === norm(b);
 }
 async function ensureRepo(config2) {
@@ -8034,7 +8037,8 @@ async function ensureRepo(config2) {
   \uACBD\uB85C: ${cacheRoot}
   \uADF8\uACF3\uC758 origin: ${origin}
   \uC120\uC5B8\uB41C url: ${config2.url}
-  cacheDir \uC774 \uC2E4\uC791\uC5C5 \uB808\uD3EC\uB97C \uAC00\uB9AC\uD0A4\uACE0 \uC788\uC9C0 \uC54A\uC740\uC9C0 \uD655\uC778\uD558\uB77C.`
+  cacheDir \uC774 \uC2E4\uC791\uC5C5 \uB808\uD3EC\uB97C \uAC00\uB9AC\uD0A4\uACE0 \uC788\uC9C0 \uC54A\uC740\uC9C0 \uBA3C\uC800 \uD655\uC778\uD558\uB77C.
+  \uCE90\uC2DC\uAC00 \uB9DE\uB2E4\uBA74 \uADF8 \uB514\uB809\uD1A0\uB9AC\uB97C \uC9C0\uC6B0\uACE0 \uB2E4\uC2DC \uC2E4\uD589\uD558\uBA74 \uB41C\uB2E4(\uC7AC\uD074\uB860\uB418\uBA70 \uD45C\uC2DD\uC774 \uC0DD\uAE34\uB2E4).`
         );
       }
       console.warn(

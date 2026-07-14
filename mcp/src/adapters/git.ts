@@ -55,11 +55,21 @@ async function cachedOrigin(cacheRoot: string): Promise<string | null> {
 }
 
 /**
- * 같은 레포를 가리키는 url 인지 비교한다. 표기 차이(후행 슬래시·`.git` 접미사·대소문자)만으로
+ * 같은 레포를 가리키는 url 인지 비교한다. 표기 차이(후행 슬래시·`.git` 접미사·scheme/host 대소문자)만으로
  * 다른 레포로 오판하면 매번 통째로 재클론하게 된다.
+ *
+ * 경로는 소문자화하지 않는다 — 경로 대소문자를 구별하는 자체호스팅 서버에서 `org/Repo` 와
+ * `org/repo` 는 서로 다른 레포일 수 있다. scheme 과 host 만 소문자로 맞춘다.
  */
 function sameRepo(a: string, b: string): boolean {
-  const norm = (u: string) => u.trim().replace(/\/+$/, '').replace(/\.git$/, '').toLowerCase();
+  const norm = (u: string) =>
+    u
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/\.git$/, '')
+      .replace(/^([A-Za-z+.-]+:\/\/)?([^/]*)/, (_m, scheme: string | undefined, host: string) =>
+        `${(scheme ?? '').toLowerCase()}${host.toLowerCase()}`,
+      );
   return norm(a) === norm(b);
 }
 
@@ -92,7 +102,8 @@ async function ensureRepo(config: GitSourceConfig): Promise<string> {
         throw new Error(
           `소스 '${config.id}' 의 cacheDir 이 다른 레포를 가리키는데, 우리가 만든 캐시라는 표식이 없다 — 지우지 않고 중단한다.\n` +
             `  경로: ${cacheRoot}\n  그곳의 origin: ${origin}\n  선언된 url: ${config.url}\n` +
-            `  cacheDir 이 실작업 레포를 가리키고 있지 않은지 확인하라.`,
+            `  cacheDir 이 실작업 레포를 가리키고 있지 않은지 먼저 확인하라.\n` +
+            `  캐시가 맞다면 그 디렉토리를 지우고 다시 실행하면 된다(재클론되며 표식이 생긴다).`,
         );
       }
       console.warn(
