@@ -1,14 +1,15 @@
 {
   "name": "@ssot-studio/mcp",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "SSOT 멀티소스 MCP 서버 — core(vendor) 재사용, SDK 번들로 clone-동작",
   "license": "MIT",
   "type": "module",
   "bin": { "ssot-mcp": "./dist/index.js" },
   "files": ["dist"],
   "scripts": {
-    "build": "node build.mjs",
-    "typecheck": "tsc --noEmit"
+      "build": "node ../scripts/check-versions.mjs && node build.mjs",
+      "typecheck": "tsc --noEmit",
+      "check-versions": "node ../scripts/check-versions.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"

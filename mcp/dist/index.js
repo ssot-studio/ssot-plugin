@@ -8016,12 +8016,22 @@ async function cachedOrigin(cacheRoot) {
   const r = await runGit(["remote", "get-url", "origin"], cacheRoot);
   return r.code === 0 ? r.stdout.trim() || null : null;
 }
+function normalizeUrl(u) {
+  const trimmed = u.trim().replace(/\/+$/, "").replace(/\.git$/, "");
+  const withScheme = trimmed.match(/^([A-Za-z+.-]+:\/\/)([^/]*)(.*)$/);
+  if (withScheme) {
+    const [, scheme, host, path] = withScheme;
+    return `${scheme.toLowerCase()}${host.toLowerCase()}${path}`;
+  }
+  const scp = trimmed.match(/^([^/:]+):(.*)$/);
+  if (scp) {
+    const [, host, path] = scp;
+    return `${host.toLowerCase()}:${path}`;
+  }
+  return trimmed;
+}
 function sameRepo(a, b) {
-  const norm = (u) => u.trim().replace(/\/+$/, "").replace(/\.git$/, "").replace(
-    /^([A-Za-z+.-]+:\/\/)?([^/]*)/,
-    (_m, scheme, host) => `${(scheme ?? "").toLowerCase()}${host.toLowerCase()}`
-  );
-  return norm(a) === norm(b);
+  return normalizeUrl(a) === normalizeUrl(b);
 }
 async function ensureRepo(config2) {
   const userChoseDir = Boolean(config2.cacheDir);

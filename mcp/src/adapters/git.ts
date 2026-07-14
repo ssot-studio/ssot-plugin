@@ -58,19 +58,34 @@ async function cachedOrigin(cacheRoot: string): Promise<string | null> {
  * 같은 레포를 가리키는 url 인지 비교한다. 표기 차이(후행 슬래시·`.git` 접미사·scheme/host 대소문자)만으로
  * 다른 레포로 오판하면 매번 통째로 재클론하게 된다.
  *
- * 경로는 소문자화하지 않는다 — 경로 대소문자를 구별하는 자체호스팅 서버에서 `org/Repo` 와
+ * **경로는 소문자화하지 않는다** — 경로 대소문자를 구별하는 자체호스팅 서버에서 `org/Repo` 와
  * `org/repo` 는 서로 다른 레포일 수 있다. scheme 과 host 만 소문자로 맞춘다.
+ *
+ * scp 표기(`git@host:org/repo`)는 콜론이 host 와 경로를 가른다. 슬래시로 자르면 `org` 까지
+ * host 로 삼켜 소문자화되므로, 콜론 앞뒤로 먼저 나눈다.
  */
+function normalizeUrl(u: string): string {
+  const trimmed = u.trim().replace(/\/+$/, '').replace(/\.git$/, '');
+
+  // scheme 이 있는 형태: <scheme>://<host>/<path>
+  const withScheme = trimmed.match(/^([A-Za-z+.-]+:\/\/)([^/]*)(.*)$/);
+  if (withScheme) {
+    const [, scheme, host, path] = withScheme;
+    return `${scheme.toLowerCase()}${host.toLowerCase()}${path}`;
+  }
+
+  // scp 표기: <user@host>:<path>
+  const scp = trimmed.match(/^([^/:]+):(.*)$/);
+  if (scp) {
+    const [, host, path] = scp;
+    return `${host.toLowerCase()}:${path}`;
+  }
+
+  return trimmed;   // 로컬 경로 등 — 그대로 둔다.
+}
+
 function sameRepo(a: string, b: string): boolean {
-  const norm = (u: string) =>
-    u
-      .trim()
-      .replace(/\/+$/, '')
-      .replace(/\.git$/, '')
-      .replace(/^([A-Za-z+.-]+:\/\/)?([^/]*)/, (_m, scheme: string | undefined, host: string) =>
-        `${(scheme ?? '').toLowerCase()}${host.toLowerCase()}`,
-      );
-  return norm(a) === norm(b);
+  return normalizeUrl(a) === normalizeUrl(b);
 }
 
 /**
