@@ -7984,7 +7984,7 @@ var localFsAdapter = {
 // src/adapters/git.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync3 } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as join3, resolve as resolve3 } from "node:path";
 function runGit(args, cwd) {
@@ -8011,17 +8011,37 @@ async function git(args, cwd, what) {
 function defaultCacheDir(id) {
   return join3(tmpdir(), "ssot-mcp", id);
 }
+var OWNED_MARKER = ".ssot-cache";
 async function cachedOrigin(cacheRoot) {
   const r = await runGit(["remote", "get-url", "origin"], cacheRoot);
   return r.code === 0 ? r.stdout.trim() || null : null;
 }
+function sameRepo(a, b) {
+  const norm = (u) => u.trim().replace(/\/+$/, "").replace(/\.git$/, "").toLowerCase();
+  return norm(a) === norm(b);
+}
 async function ensureRepo(config2) {
+  const userChoseDir = Boolean(config2.cacheDir);
   const cacheRoot = config2.cacheDir ? resolve3(config2.cacheDir) : defaultCacheDir(config2.id);
   const gitDir = join3(cacheRoot, ".git");
   const pull = config2.pull !== false;
   if (existsSync3(gitDir)) {
     const origin = await cachedOrigin(cacheRoot);
-    if (origin && origin !== config2.url) {
+    if (origin && !sameRepo(origin, config2.url)) {
+      if (userChoseDir && !existsSync3(join3(cacheRoot, OWNED_MARKER))) {
+        throw new Error(
+          `\uC18C\uC2A4 '${config2.id}' \uC758 cacheDir \uC774 \uB2E4\uB978 \uB808\uD3EC\uB97C \uAC00\uB9AC\uD0A4\uB294\uB370, \uC6B0\uB9AC\uAC00 \uB9CC\uB4E0 \uCE90\uC2DC\uB77C\uB294 \uD45C\uC2DD\uC774 \uC5C6\uB2E4 \u2014 \uC9C0\uC6B0\uC9C0 \uC54A\uACE0 \uC911\uB2E8\uD55C\uB2E4.
+  \uACBD\uB85C: ${cacheRoot}
+  \uADF8\uACF3\uC758 origin: ${origin}
+  \uC120\uC5B8\uB41C url: ${config2.url}
+  cacheDir \uC774 \uC2E4\uC791\uC5C5 \uB808\uD3EC\uB97C \uAC00\uB9AC\uD0A4\uACE0 \uC788\uC9C0 \uC54A\uC740\uC9C0 \uD655\uC778\uD558\uB77C.`
+        );
+      }
+      console.warn(
+        `[ssot] \uC18C\uC2A4 '${config2.id}' \uC758 \uC6D0\uCC9C\uC774 \uBC14\uB00C\uC5C8\uB2E4 \u2014 \uCE90\uC2DC\uB97C \uBC84\uB9AC\uACE0 \uB2E4\uC2DC \uD074\uB860\uD55C\uB2E4.
+  \uC774\uC804: ${origin}
+  \uD604\uC7AC: ${config2.url}`
+      );
       await rm(cacheRoot, { recursive: true, force: true });
     }
   }
@@ -8031,6 +8051,8 @@ async function ensureRepo(config2) {
     if (config2.ref) cloneArgs.push("--branch", config2.ref);
     cloneArgs.push(config2.url, cacheRoot);
     await git(cloneArgs, void 0, `clone ${config2.url}`);
+    await writeFile(join3(cacheRoot, OWNED_MARKER), `${config2.url}
+`);
     return cacheRoot;
   }
   if (pull) {

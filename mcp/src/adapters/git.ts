@@ -5,7 +5,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { GitSourceConfig } from '../config.js';
@@ -45,10 +45,22 @@ function defaultCacheDir(id: string): string {
   return join(tmpdir(), 'ssot-mcp', id);
 }
 
+/** 이 디렉토리를 우리가 클론해 소유한다는 표식. 이게 없는 디렉토리는 절대 지우지 않는다. */
+const OWNED_MARKER = '.ssot-cache';
+
 /** 캐시된 클론이 가리키는 origin. 레포가 아니거나 origin 이 없으면 null. */
 async function cachedOrigin(cacheRoot: string): Promise<string | null> {
   const r = await runGit(['remote', 'get-url', 'origin'], cacheRoot);
   return r.code === 0 ? r.stdout.trim() || null : null;
+}
+
+/**
+ * 같은 레포를 가리키는 url 인지 비교한다. 표기 차이(후행 슬래시·`.git` 접미사·대소문자)만으로
+ * 다른 레포로 오판하면 매번 통째로 재클론하게 된다.
+ */
+function sameRepo(a: string, b: string): boolean {
+  const norm = (u: string) => u.trim().replace(/\/+$/, '').replace(/\.git$/, '').toLowerCase();
+  return norm(a) === norm(b);
 }
 
 /**
@@ -62,15 +74,31 @@ async function cachedOrigin(cacheRoot: string): Promise<string | null> {
  * url 을 바꿨을 때(레포 이전 등) 캐시의 옛 origin 으로 fetch 가 계속 성공해, 아무 경고 없이
  * **옛 원천을 진실로 쓰게 된다** — 단일 진실원천 도구에서 가장 나쁜 실패다. 조용히 틀린 답을
  * 주느니 다시 클론하는 비용을 치른다.
+ *
+ * 단, **우리 것이 확실한 디렉토리만** 지운다. 기본 캐시 경로는 우리가 만든 것이니 그대로 지우고,
+ * 사용자가 `cacheDir` 로 직접 지정한 경로는 소유 표식이 있을 때만 지운다 — 그 설정이 실수로 실작업
+ * 레포를 가리키면 통째로 날아가기 때문이다. 표식이 없으면 지우지 않고 중단해 사람에게 알린다.
  */
 async function ensureRepo(config: GitSourceConfig): Promise<string> {
+  const userChoseDir = Boolean(config.cacheDir);
   const cacheRoot = config.cacheDir ? resolve(config.cacheDir) : defaultCacheDir(config.id);
   const gitDir = join(cacheRoot, '.git');
   const pull = config.pull !== false;
 
   if (existsSync(gitDir)) {
     const origin = await cachedOrigin(cacheRoot);
-    if (origin && origin !== config.url) {
+    if (origin && !sameRepo(origin, config.url)) {
+      if (userChoseDir && !existsSync(join(cacheRoot, OWNED_MARKER))) {
+        throw new Error(
+          `소스 '${config.id}' 의 cacheDir 이 다른 레포를 가리키는데, 우리가 만든 캐시라는 표식이 없다 — 지우지 않고 중단한다.\n` +
+            `  경로: ${cacheRoot}\n  그곳의 origin: ${origin}\n  선언된 url: ${config.url}\n` +
+            `  cacheDir 이 실작업 레포를 가리키고 있지 않은지 확인하라.`,
+        );
+      }
+      console.warn(
+        `[ssot] 소스 '${config.id}' 의 원천이 바뀌었다 — 캐시를 버리고 다시 클론한다.\n` +
+          `  이전: ${origin}\n  현재: ${config.url}`,
+      );
       await rm(cacheRoot, { recursive: true, force: true });
     }
   }
@@ -81,6 +109,7 @@ async function ensureRepo(config: GitSourceConfig): Promise<string> {
     if (config.ref) cloneArgs.push('--branch', config.ref);
     cloneArgs.push(config.url, cacheRoot);
     await git(cloneArgs, undefined, `clone ${config.url}`);
+    await writeFile(join(cacheRoot, OWNED_MARKER), `${config.url}\n`);
     return cacheRoot;
   }
 
